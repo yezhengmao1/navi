@@ -2,7 +2,7 @@
 name: paper
 description: 阅读 arxiv 论文（支持多篇并行），Professor 视角评审 + PhD 视角精读
 user-invocable: true
-allowed-tools: WebFetch, Agent, Bash, Read, Grep
+allowed-tools: WebFetch, Agent
 context: fork
 ---
 
@@ -14,24 +14,20 @@ context: fork
 
 ## 输入
 
-用户可以通过以下任意方式指定论文：
+用户可以通过以下方式指定论文：
 
 - **URL**：`/paper http://arxiv.org/abs/2604.02178v1`
-- **序号**：`/paper 3` 或 `/paper 1 3 5`（引用最近一次 `/arxiv` 结果中的序号）
-- **关键词**：`/paper Expert Strikes Back`（按标题关键词模糊匹配）
-- **混合**：`/paper 1 http://arxiv.org/abs/2604.02178v1 scaling law`
+- **标题**：`/paper Expert Strikes Back`（在 arxiv 搜索匹配的论文）
+- **混合**：`/paper http://arxiv.org/abs/2604.02178v1 Expert Strikes Back`
 
 ### 解析输入
 
-1. 如果参数是纯数字，视为 `/arxiv` 结果中的序号
-2. 如果参数包含 `arxiv.org`，视为 URL
-3. 其余视为标题关键词
-
-对于序号和关键词，读取 `~/.navi/arxiv_papers.md` 查找对应的 URL：
-- **序号**：匹配最近一个日期段落中 `{序号}. {标题}` 行，取下一行的 URL
-- **关键词**：在文件中搜索标题包含该关键词的论文（不区分大小写），取对应 URL
-
-如果 `~/.navi/arxiv_papers.md` 不存在或找不到匹配，告知用户需要先运行 `/arxiv` 或直接提供 URL。
+1. 如果参数包含 `arxiv.org`，视为 URL
+2. 其余视为论文标题，使用 WebFetch 通过 arxiv API 搜索：
+   ```
+   https://export.arxiv.org/api/query?search_query=ti:"标题关键词"&max_results=1
+   ```
+   从返回结果中提取论文 URL。如果搜索无结果，告知用户未找到匹配论文。
 
 ## 数据获取
 

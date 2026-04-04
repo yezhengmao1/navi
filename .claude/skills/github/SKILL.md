@@ -57,16 +57,21 @@ curl -s -H "Authorization: token $TOKEN" "https://api.github.com/repos/<owner>/<
 ```
 ## GitHub 每日热榜
 
-| # | 仓库 | ⭐ Stars | 🔀 Forks | 简介 |
-|---|------|---------|---------|------|
-| 1 | owner/repo | 1.2k | 300 | 详细的项目简介描述 |
+────────────────────────────────────────
+  #: 1
+  仓库: owner/repo (⭐ 1.2k 🔀 300)
+  简介: 详细的项目简介描述
+  链接: https://github.com/owner/repo
 ```
+
+每条仓库之间用 `────────────────────────────────────────` 分隔。
 
 ## 格式要求
 
-- **仓库列**：只显示 `owner/repo` 短名称，不要显示完整 URL
+- **仓库**：只显示 `owner/repo` 短名称 + stars 和 forks，格式为 `owner/repo (⭐ Stars 🔀 Forks)`
 - **Forks 图标**：使用 🔀 不要用 🍴
 - **简介**：尽量详细，英文翻译为中文，保留关键技术术语
+- **链接**：仓库完整 URL `https://github.com/owner/repo`
 - 如果用户指定了语言（`$ARGUMENTS`），在标题中注明（如 "GitHub 热榜 — Python"）
 - 用中文输出所有非代码内容
 - 列出所有 trending 仓库，不要截断

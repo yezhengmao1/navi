@@ -1,6 +1,6 @@
 ---
 name: brief
-description: 每日简报，并行调用 arxiv / 知乎 / HN / GitHub / Product Hunt
+description: 每日简报，并行调用 arxiv / HF Papers / 知乎 / HN / GitHub / Product Hunt
 user-invocable: true
 allowed-tools: Agent
 context: fork
@@ -10,19 +10,20 @@ context: fork
 
 ## 任务
 
-并行调用以下 5 个 skill，汇总为一份精简日报。
+并行调用以下 6 个 skill，汇总为一份精简日报。
 
 ## 执行步骤
 
 ### 第一步：并行启动
 
-用 Agent 工具同时启动 5 个 agent，每个 agent 调用一个 Skill：
+用 Agent 工具同时启动 6 个 agent，每个 agent 调用一个 Skill：
 
 1. `Skill: arxiv`
-2. `Skill: zhihu`
-3. `Skill: hackernews`
-4. `Skill: github`
-5. `Skill: producthunt`
+2. `Skill: hfpapers`
+3. `Skill: zhihu`
+4. `Skill: hackernews`
+5. `Skill: github`
+6. `Skill: producthunt`
 
 每个 agent 的 prompt 为：`使用 Skill 工具调用 {skill名}，将完整输出返回给我。`
 

@@ -59,25 +59,6 @@ https://export.arxiv.org/api/query?search_query=cat:cs.AI+OR+cat:cs.CL+OR+cat:cs
 
 每篇论文之间用 `────────────────────────────────────────` 分隔。
 
-## 保存结果索引
-
-输出完成后，将筛选出的论文追加到 `~/.navi/arxiv_papers.md`，供 `/paper` 通过序号或关键词引用。
-
-格式如下（每次运行追加一个日期段落，不覆盖旧内容）：
-
-```
-## 2026-04-04
-
-1. Batched Contextual Reinforcement: A Task-Scaling Law for Efficient Reasoning
-   http://arxiv.org/abs/2604.02322v1
-2. go-mHC: Direct Parameterization of Manifold-Constrained Hyper-Connections
-   http://arxiv.org/abs/2604.02309v1
-```
-
-每篇论文两行：第一行为 `{序号}. {英文标题}`，第二行缩进三个空格后为 URL。
-
-使用 Bash 追加写入，不要覆盖已有内容。如果文件中已有当天日期的段落，先删除旧的当天段落再写入新的。
-
 ## 注意事项
 
 - 所有非论文原文的内容用中文输出

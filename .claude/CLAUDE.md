@@ -7,9 +7,10 @@
 | 命令 | 说明 |
 |------|------|
 | `/arxiv` | 筛选今日 arxiv 上 LLM 基模和训练系统相关论文 |
-| `/paper <序号/URL/关键词>` | 深度阅读 arxiv 论文 |
+| `/paper <URL/标题>` | 深度阅读 arxiv 论文 |
 | `/github [language]` | GitHub 每日热门仓库，支持按语言筛选 |
 | `/zhihu` | 知乎当前热榜话题 |
+| `/hfpapers` | Hugging Face Daily Papers 今日热门论文 |
 | `/hackernews` | Hacker News 当前热门帖子 |
 | `/producthunt` | Product Hunt 今日热门产品 |
 | `/brief` | 每日简报，聚合以上所有信息源 |
