@@ -11,9 +11,13 @@
 | 命令 | 说明 |
 |------|------|
 | `/arxiv` | 筛选今日 arxiv 上 LLM 基模和训练系统相关论文 |
-| `/paper <序号/URL/关键词>` | 深度阅读 arxiv 论文，输出逐段总结、Review、核心要素提取 |
+| `/paper <URL/标题>` | 深度阅读 arxiv 论文，输出逐段总结、Review、核心要素提取 |
 | `/github [language]` | GitHub 每日热门仓库，支持按语言筛选 |
 | `/zhihu` | 知乎当前热榜话题 |
+| `/hfpapers` | Hugging Face Daily Papers 今日热门论文 |
+| `/hackernews` | Hacker News 当前热门帖子 |
+| `/producthunt` | Product Hunt 今日热门产品 |
+| `/brief` | 每日简报，聚合以上所有信息源 |
 
 ## 快速开始
 
@@ -26,11 +30,15 @@ claude
 进入 Claude Code 后直接使用：
 
 ```
-> /arxiv             # 今日 LLM/训练系统论文
-> /paper 1           # 深度阅读第 1 篇论文
+> /arxiv              # 今日 LLM/训练系统论文
+> /paper Scaling Law  # 按标题搜索并深度阅读
 > /github             # 今日 GitHub 热榜
 > /github rust        # Rust 语言热榜
-> /zhihu             # 知乎热榜
+> /zhihu              # 知乎热榜
+> /hfpapers           # HF 今日热门论文
+> /hackernews         # Hacker News 热帖
+> /producthunt        # Product Hunt 热门产品
+> /brief              # 每日简报（聚合全部）
 ```
 
 ## 配置
@@ -52,8 +60,12 @@ Token 获取：[GitHub Settings > Personal access tokens](https://github.com/set
 └── skills/
     ├── arxiv/SKILL.md           # arxiv 论文筛选
     ├── paper/SKILL.md           # 论文深度阅读
-    ├── trending/SKILL.md        # GitHub 热榜
-    └── zhihu/SKILL.md           # 知乎热榜
+    ├── github/SKILL.md           # GitHub 热榜
+    ├── zhihu/SKILL.md           # 知乎热榜
+    ├── hfpapers/SKILL.md        # HF Daily Papers
+    ├── hackernews/SKILL.md      # Hacker News
+    ├── producthunt/SKILL.md     # Product Hunt
+    └── brief/SKILL.md           # 每日简报
 ```
 
 纯 Skills 项目，无额外依赖，克隆即用。
