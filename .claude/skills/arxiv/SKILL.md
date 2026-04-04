@@ -46,17 +46,18 @@ https://export.arxiv.org/api/query?search_query=cat:cs.AI+OR+cat:cs.CL+OR+cat:cs
 
 ## 输出格式
 
-对每篇筛选出的论文，输出：
-
 ```
-### {序号}. {Title}
+## arxiv 今日筛选
 
-- **URL**: {arxiv link}
-- **Authors**: {作者列表}
-- **中文摘要**: {将英文摘要翻译/概括为 2-3 句中文}
-
----
+────────────────────────────────────────
+  #: 1
+  标题: Paper Title
+  作者: Author1, Author2, ...
+  摘要: 2-3 句中文摘要
+  链接: http://arxiv.org/abs/xxxx.xxxxxv1
 ```
+
+每篇论文之间用 `────────────────────────────────────────` 分隔。
 
 ## 保存结果索引
 

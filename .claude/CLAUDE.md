@@ -10,6 +10,9 @@
 | `/paper <序号/URL/关键词>` | 深度阅读 arxiv 论文 |
 | `/github [language]` | GitHub 每日热门仓库，支持按语言筛选 |
 | `/zhihu` | 知乎当前热榜话题 |
+| `/hackernews` | Hacker News 当前热门帖子 |
+| `/producthunt` | Product Hunt 今日热门产品 |
+| `/brief` | 每日简报，聚合以上所有信息源 |
 
 ## 配置
 
