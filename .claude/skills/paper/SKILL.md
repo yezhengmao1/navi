@@ -2,7 +2,7 @@
 name: paper
 description: 阅读 arxiv 论文（支持多篇并行），Professor 视角评审 + PhD 视角精读
 user-invocable: true
-allowed-tools: WebFetch, Agent
+allowed-tools: WebFetch, Agent, mcp__siyuan__list_notebooks, mcp__siyuan__create_doc
 context: fork
 ---
 
@@ -146,6 +146,17 @@ context: fork
 {PhD Agent 的输出}
 ```
 
+## 写入思源笔记
+
+如果 siyuan MCP 可用（`mcp__siyuan__list_notebooks` 能调通），则将每篇论文的阅读笔记写入思源：
+
+1. 调用 `mcp__siyuan__list_notebooks` 找到名为 **navi** 的笔记本，取其 ID
+2. 对每篇论文调用 `mcp__siyuan__create_doc`：
+   - `notebook`: navi 的笔记本 ID
+   - `path`: `/paper/{论文标题的简短英文 slug}`（如 `/paper/expert-strikes-back`）
+   - `markdown`: 该篇论文的完整阅读笔记（标题 + Professor + PhD）
+3. 如果 navi 笔记本不存在或写入失败，跳过并告知用户
+
 ## 注意事项
 
 - 所有分析内容用中文输出
@@ -153,3 +164,4 @@ context: fork
 - 保留重要的数学公式（用 LaTeX 格式）
 - 单篇时两个 Agent 必须并行执行以提高效率
 - 如果论文过长，优先保证 Method 和 Experiments 部分的完整性
+- 写入思源是可选步骤，失败不影响正常输出
