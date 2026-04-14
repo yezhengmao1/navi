@@ -25,7 +25,7 @@ for f in "$STATUS_DIR"/*; do
 done
 
 parts=()
-[ "$pending" -gt 0 ]  && parts+=("◐ ${pending}")
+[ "$pending" -gt 0 ]  && parts+=("✨${pending}")
 [ "$tool_use" -gt 0 ] && parts+=("● ${tool_use}")
 [ "$thinking" -gt 0 ] && parts+=("✢ ${thinking}")
 [ "$idle" -gt 0 ]     && parts+=("○ ${idle}")
