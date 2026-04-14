@@ -18,7 +18,7 @@ context: fork
 
 使用 WebFetch 抓取：
 ```
-https://rss.arxiv.org/rss/cs.AI+cs.CE+cs.DB+cs.DC+cs.MA+cs.OS+cs.SY
+https://rss.arxiv.org/rss/cs.AI+cs.CL+cs.LG+cs.CE+cs.DB+cs.DC+cs.MA+cs.OS+cs.SY
 ```
 
 提取所有 `<item>` 中的 title、link、dc:creator（作者）、description（摘要）。
@@ -27,10 +27,24 @@ https://rss.arxiv.org/rss/cs.AI+cs.CE+cs.DB+cs.DC+cs.MA+cs.OS+cs.SY
 
 RSS 在周末/假期可能为空。此时使用 WebFetch 抓取 arxiv API：
 ```
-https://export.arxiv.org/api/query?search_query=cat:cs.AI+OR+cat:cs.CL+OR+cat:cs.DC+OR+cat:cs.DB&sortBy=submittedDate&sortOrder=descending&max_results=50
+https://export.arxiv.org/api/query?search_query=cat:cs.AI+OR+cat:cs.CL+OR+cat:cs.LG+OR+cat:cs.DC+OR+cat:cs.DB&sortBy=submittedDate&sortOrder=descending&max_results=50
 ```
 
 从 Atom XML 中提取 title、id（URL）、author、summary。
+
+## arXiv 分类代码
+
+| 代码 | 全称 | 说明 |
+|------|------|------|
+| cs.AI | Artificial Intelligence | 人工智能 |
+| cs.CL | Computation and Language | 计算与语言（NLP） |
+| cs.LG | Machine Learning | 机器学习 |
+| cs.DC | Distributed, Parallel, and Cluster Computing | 分布式与并行计算 |
+| cs.DB | Databases | 数据库 |
+| cs.CE | Computational Engineering | 计算工程 |
+| cs.MA | Multiagent Systems | 多智能体系统 |
+| cs.OS | Operating Systems | 操作系统 |
+| cs.SY | Systems and Control | 系统与控制 |
 
 ## 筛选规则
 
