@@ -3,7 +3,7 @@
 # Usage: add  #(/path/to/statusline.sh)  to tmux status-right or status-left.
 
 STATUS_DIR="/tmp/claude-status"
-TIME=$(date '+%H:%M')
+printf -v TIME '%(%H:%M)T' -1
 
 if [ ! -d "$STATUS_DIR" ]; then
   printf '%s' "$TIME"
@@ -14,12 +14,13 @@ idle=0 thinking=0 tool_use=0 pending=0
 
 for f in "$STATUS_DIR"/*; do
   [ -f "$f" ] || continue
-  state=$(grep -o '"state":"[^"]*"' "$f" 2>/dev/null | head -1)
+  line=$(<"$f")
+  state=${line##*'"state":"'}; state=${state%%'"'*}
   case "$state" in
-    *idle*)      idle=$((idle + 1)) ;;
-    *thinking*)  thinking=$((thinking + 1)) ;;
-    *tool_use*)  tool_use=$((tool_use + 1)) ;;
-    *pending*)   pending=$((pending + 1)) ;;
+    idle)      idle=$((idle + 1)) ;;
+    thinking)  thinking=$((thinking + 1)) ;;
+    tool_use)  tool_use=$((tool_use + 1)) ;;
+    pending)   pending=$((pending + 1)) ;;
   esac
 done
 

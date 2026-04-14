@@ -13,21 +13,13 @@ if [ ! -d "$STATUS_DIR" ] || [ -z "$(ls -A "$STATUS_DIR" 2>/dev/null)" ]; then
   exit 0
 fi
 
-# Extract field from our controlled single-line JSON (no jq needed)
-_field() { local v="${1##*\"$2\":\"}" ; v="${v%%\"*}" ; echo "$v" ; }
-
-# State display: icon, color
-# idle=green, thinking=yellow, tool_use=cyan, pending=red, stale=dim
-_icon()  { case "$1" in idle) echo "o";; thinking) echo "*";; tool_use) echo ">";; pending) echo "!";; *) echo "?";; esac; }
-_color() { case "$1" in idle) echo "32";; thinking) echo "33";; tool_use) echo "36";; pending) echo "31";; *) echo "37";; esac; }
-
 # Collect active tmux panes once
 declare -A active_pane_set
 while IFS= read -r p; do
   [ -n "$p" ] && active_pane_set[$p]=1
 done < <(tmux list-panes -a -F '#{pane_id}' 2>/dev/null)
 
-now=$(date +%s)
+printf -v now '%(%s)T' -1
 
 declare -a pane_targets=()
 idx=0
@@ -40,10 +32,11 @@ for f in "$STATUS_DIR"/*; do
   [ -f "$f" ] || continue
   line=$(<"$f")
 
-  state=$(_field "$line" state)
-  detail=$(_field "$line" detail)
-  cwd=$(_field "$line" cwd)
-  pane=$(_field "$line" pane)
+  # Inline field extraction — no subshells
+  state=${line##*'"state":"'}; state=${state%%'"'*}
+  detail=${line##*'"detail":"'}; detail=${detail%%'"'*}
+  cwd=${line##*'"cwd":"'}; cwd=${cwd%%'"'*}
+  pane=${line##*'"pane":"'}; pane=${pane%%'"'*}
 
   # Remove status files whose pane no longer exists
   if [ -n "$pane" ] && [ ${#active_pane_set[@]} -gt 0 ]; then
@@ -53,9 +46,9 @@ for f in "$STATUS_DIR"/*; do
     fi
   fi
 
-  # Show elapsed time for long-running tool use
+  # Show elapsed time for long-running tool use (stat in subshell only when needed)
   if [ "$state" = "tool_use" ]; then
-    file_age=$(( now - $(stat -c %Y "$f" 2>/dev/null || echo "$now") ))
+    file_age=$(( now - $(stat -c %Y "$f") ))
     if [ "$file_age" -gt 10 ]; then
       if [ "$file_age" -ge 60 ]; then
         detail="${detail} ($((file_age / 60))m$((file_age % 60))s)"
@@ -65,11 +58,17 @@ for f in "$STATUS_DIR"/*; do
     fi
   fi
 
-  project="${cwd##*/}"
-  [ -z "$project" ] && project="unknown"
+  project=${cwd##*/}
+  : "${project:=unknown}"
 
-  icon=$(_icon "$state")
-  color=$(_color "$state")
+  # Inline icon/color — no subshells
+  case "$state" in
+    idle)     icon=o color=32 ;;
+    thinking) icon='*' color=33 ;;
+    tool_use) icon='>' color=36 ;;
+    pending)  icon='!' color=31 ;;
+    *)        icon='?' color=37 ;;
+  esac
 
   idx=$((idx + 1))
   pane_targets+=("$pane")
