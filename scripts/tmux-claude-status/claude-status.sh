@@ -7,99 +7,74 @@ set -euo pipefail
 
 STATUS_DIR="/tmp/claude-status"
 
-# State icons
-icon_for() {
-  case "$1" in
-    idle)      echo "o"  ;;
-    thinking)  echo "*"  ;;
-    tool_use)  echo ">"  ;;
-    pending)   echo "!"  ;;
-    *)         echo "?"  ;;
-  esac
-}
-
-color_for() {
-  case "$1" in
-    idle)      echo "32" ;;
-    thinking)  echo "33" ;;
-    tool_use)  echo "36" ;;
-    pending)   echo "31" ;;
-    *)         echo "37" ;;
-  esac
-}
-
-# Collect running claude PIDs and their CWDs
-declare -A pid_cwd
-for pid in $(pgrep -x claude 2>/dev/null); do
-  cwd=$(readlink "/proc/$pid/cwd" 2>/dev/null || true)
-  [ -n "$cwd" ] && pid_cwd[$pid]="$cwd"
-done
-
-if [ ${#pid_cwd[@]} -eq 0 ] && [ ! -d "$STATUS_DIR" ]; then
+if [ ! -d "$STATUS_DIR" ] || [ -z "$(ls -A "$STATUS_DIR" 2>/dev/null)" ]; then
   echo "  No Claude instances running."
   read -rsn1
   exit 0
 fi
 
-# Arrays to store pane targets for jumping
-declare -a pane_targets=()
+# Extract field from our controlled single-line JSON (no jq needed)
+_field() { local v="${1##*\"$2\":\"}" ; v="${v%%\"*}" ; echo "$v" ; }
 
+# State display: icon, color
+# idle=green, thinking=yellow, tool_use=cyan, pending=red, stale=dim
+_icon()  { case "$1" in idle) echo "o";; thinking) echo "*";; tool_use) echo ">";; pending) echo "!";; *) echo "?";; esac; }
+_color() { case "$1" in idle) echo "32";; thinking) echo "33";; tool_use) echo "36";; pending) echo "31";; *) echo "37";; esac; }
+
+# Collect active tmux panes once
+declare -A active_pane_set
+while IFS= read -r p; do
+  [ -n "$p" ] && active_pane_set[$p]=1
+done < <(tmux list-panes -a -F '#{pane_id}' 2>/dev/null)
+
+now=$(date +%s)
+
+declare -a pane_targets=()
 idx=0
 
 # Header
 printf "\n  \033[1m%-4s %-20s %-10s %s\033[0m\n" "#" "Project" "State" "Detail"
 printf "  %s\n" "──────────────────────────────────────────────────"
 
-# Track known cwds for dedup
-declare -A known_cwds
+for f in "$STATUS_DIR"/*; do
+  [ -f "$f" ] || continue
+  line=$(<"$f")
 
-# Collect active tmux panes for stale-session cleanup
-active_panes=$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null | sort)
+  state=$(_field "$line" state)
+  detail=$(_field "$line" detail)
+  cwd=$(_field "$line" cwd)
+  pane=$(_field "$line" pane)
 
-# Show sessions with status files (hook-tracked) — single jq call per file
-if [ -d "$STATUS_DIR" ]; then
-  for f in "$STATUS_DIR"/*; do
-    [ -f "$f" ] || continue
-    IFS=$'\t' read -r state detail cwd pane <<< "$(
-      jq -r '[.state // "unknown", .detail // "", .cwd // "", .pane // ""] | join("\t")' "$f" 2>/dev/null
-    )" || continue
+  # Remove status files whose pane no longer exists
+  if [ -n "$pane" ] && [ ${#active_pane_set[@]} -gt 0 ]; then
+    if [ -z "${active_pane_set[$pane]:-}" ]; then
+      rm -f "$f"
+      continue
+    fi
+  fi
 
-    # Remove stale status files whose pane no longer exists
-    if [ -n "$pane" ] && [ -n "$active_panes" ]; then
-      if ! echo "$active_panes" | grep -qxF "$pane"; then
-        rm -f "$f"
-        continue
+  # Show elapsed time for long-running tool use
+  if [ "$state" = "tool_use" ]; then
+    file_age=$(( now - $(stat -c %Y "$f" 2>/dev/null || echo "$now") ))
+    if [ "$file_age" -gt 10 ]; then
+      if [ "$file_age" -ge 60 ]; then
+        detail="${detail} ($((file_age / 60))m$((file_age % 60))s)"
+      else
+        detail="${detail} (${file_age}s)"
       fi
     fi
-
-    [ -n "$cwd" ] && known_cwds[$cwd]=1
-    project="${cwd##*/}"
-    [ -z "$project" ] && project="unknown"
-
-    icon=$(icon_for "$state")
-    color=$(color_for "$state")
-
-    idx=$((idx + 1))
-    pane_targets+=("$pane")
-    printf "  \033[${color}m${icon}\033[0m %-3s %-20s \033[${color}m%-10s\033[0m %s\n" \
-      "$idx" "$project" "$state" "$detail"
-  done
-fi
-
-# Show running claude processes not already tracked — no nested jq loop
-for pid in "${!pid_cwd[@]}"; do
-  cwd="${pid_cwd[$pid]}"
-  [ -n "${known_cwds[$cwd]:-}" ] && continue
+  fi
 
   project="${cwd##*/}"
-  tty=$(readlink "/proc/$pid/fd/0" 2>/dev/null || true)
-  pane=$(tmux list-panes -a -F '#{pane_tty} #{pane_id}' 2>/dev/null \
-         | awk -v t="$tty" '$1==t {print $2}' | head -1)
+  [ -z "$project" ] && project="unknown"
+
+  icon=$(_icon "$state")
+  color=$(_color "$state")
 
   idx=$((idx + 1))
   pane_targets+=("$pane")
-  printf "  \033[37m?\033[0m %-3s %-20s \033[37m%-10s\033[0m %s\n" \
-    "$idx" "$project" "unknown" "pid:$pid"
+  printf "  \033[${color}m${icon}\033[0m %-3s %-20s \033[${color}m%-10s\033[0m %s\n" \
+    "$idx" "$project" "$state" "$detail"
 done
 
 if [ $idx -eq 0 ]; then
@@ -119,7 +94,6 @@ while true; do
       if [ $sel -lt ${#pane_targets[@]} ]; then
         target="${pane_targets[$sel]}"
         if [ -n "$target" ]; then
-          # switch to the session/window containing the target pane, then select it
           tmux switch-client -t "$target" 2>/dev/null \
             || tmux select-window -t "$target" 2>/dev/null
           tmux select-pane -t "$target" 2>/dev/null

@@ -28,7 +28,7 @@ case "$EVENT" in
   UserPromptSubmit)   write_status "thinking"  "processing prompt" ;;
   PreToolUse)         write_status "tool_use"  "$TOOL" ;;
   PostToolUse)        write_status "thinking"  "after $TOOL" ;;
-  PermissionRequest)  write_status "pending"   "approve $TOOL?" ;;
+  PermissionRequest)  write_status "pending" "approve $TOOL?" ;;
   Stop)
     [ "$STOP_ACTIVE" = "true" ] && exit 0
     write_status "idle" "waiting for input" ;;
