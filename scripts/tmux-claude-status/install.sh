@@ -70,7 +70,7 @@ echo "  Hooks written to $SETTINGS_FILE"
 echo "Installing tmux keybinding (prefix + a)..."
 
 BIND_LINE="bind a display-popup -w 70 -h 20 -E \"$POPUP_SCRIPT\"  # claude-status-popup"
-STATUSLINE_LINE="set -ag status-right \"#[default] #($STATUSLINE_SCRIPT)\"  # claude-statusline"
+STATUSLINE_LINE="set -g status-right '#{?window_bigger,[#{window_offset_x}#,#{window_offset_y}] ,}#($STATUSLINE_SCRIPT)'  # claude-statusline"
 
 if grep -qF 'claude-status-popup' "$TMUX_CONF" 2>/dev/null; then
   sed -i '/claude-status-popup/c\'"$BIND_LINE" "$TMUX_CONF"
@@ -92,7 +92,7 @@ fi
 # Live-apply if tmux is running
 if [ -n "${TMUX:-}" ]; then
   tmux bind a display-popup -w 70 -h 20 -E "$POPUP_SCRIPT" 2>/dev/null || true
-  tmux set -ag status-right " #[default] #($STATUSLINE_SCRIPT)" 2>/dev/null || true
+  tmux set -g status-right "#{?window_bigger,[#{window_offset_x}#,#{window_offset_y}] ,}#($STATUSLINE_SCRIPT)" 2>/dev/null || true
   echo "  Keybinding and statusline active in current tmux session."
 fi
 
