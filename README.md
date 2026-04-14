@@ -27,7 +27,9 @@ cd navi
 claude
 ```
 
-进入 Claude Code 后直接使用：
+进入 Claude Code 后，它会自动引导你完成安装配置（MCP 依赖、config.toml、claude-hud 状态栏等）。
+
+安装完成后直接使用：
 
 ```
 > /arxiv              # 今日 LLM/训练系统论文
@@ -43,20 +45,26 @@ claude
 
 ## 配置
 
-`/github` 需要 GitHub token 来访问 API。创建配置文件 `~/.navi/config.toml`：
+配置文件位于 `~/.navi/config.toml`：
 
 ```toml
 [github]
 token = "ghp_xxx"
+
+[siyuan]
+url = "http://127.0.0.1:6806"
+token = "your-siyuan-api-token"
 ```
 
-Token 获取：[GitHub Settings > Personal access tokens](https://github.com/settings/tokens)，无需勾选任何 scope。
+- `/github` 需要 GitHub token：[GitHub Settings > Personal access tokens](https://github.com/settings/tokens)，无需勾选任何 scope
+- 思源笔记 MCP 需要配置 `siyuan.url` 和 `siyuan.token`
 
 ## 项目结构
 
 ```
 .claude/
 ├── CLAUDE.md                    # 项目指令
+├── settings.json                # MCP Server 配置
 └── skills/
     ├── arxiv/SKILL.md           # arxiv 论文筛选
     ├── paper/SKILL.md           # 论文深度阅读
@@ -66,11 +74,16 @@ Token 获取：[GitHub Settings > Personal access tokens](https://github.com/set
     ├── hackernews/SKILL.md      # Hacker News
     ├── producthunt/SKILL.md     # Product Hunt
     └── brief/SKILL.md           # 每日简报
+mcp/
+└── siyuan/
+    ├── index.js                 # 思源笔记 MCP Server
+    └── package.json             # 依赖声明
 scripts/
 └── tmux-claude-status/
     ├── install.sh               # 安装/卸载
     ├── status-hook.sh           # hook 脚本
-    └── claude-status.sh         # 弹窗显示脚本
+    ├── claude-status.sh         # 弹窗显示脚本
+    └── statusline.sh            # 状态栏组件
 ```
 
 ## tmux-claude-status
@@ -86,8 +99,6 @@ bash scripts/tmux-claude-status/install.sh
 # 卸载
 bash scripts/tmux-claude-status/install.sh --uninstall
 ```
-
-纯 Skills 项目，无额外依赖，克隆即用。
 
 ## License
 
