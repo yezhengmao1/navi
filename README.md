@@ -60,12 +60,31 @@ Token 获取：[GitHub Settings > Personal access tokens](https://github.com/set
 └── skills/
     ├── arxiv/SKILL.md           # arxiv 论文筛选
     ├── paper/SKILL.md           # 论文深度阅读
-    ├── github/SKILL.md           # GitHub 热榜
+    ├── github/SKILL.md          # GitHub 热榜
     ├── zhihu/SKILL.md           # 知乎热榜
     ├── hfpapers/SKILL.md        # HF Daily Papers
     ├── hackernews/SKILL.md      # Hacker News
     ├── producthunt/SKILL.md     # Product Hunt
     └── brief/SKILL.md           # 每日简报
+scripts/
+└── tmux-claude-status/
+    ├── install.sh               # 安装/卸载
+    ├── status-hook.sh           # hook 脚本
+    └── claude-status.sh         # 弹窗显示脚本
+```
+
+## tmux-claude-status
+
+tmux 插件，通过 Claude Code hooks 实时追踪所有 Claude 实例状态。
+
+`prefix + a` 弹窗查看详情，按编号跳转到对应 pane。
+
+```bash
+# 安装（写入 hooks 到 ~/.claude/settings.json + tmux 快捷键）
+bash scripts/tmux-claude-status/install.sh
+
+# 卸载
+bash scripts/tmux-claude-status/install.sh --uninstall
 ```
 
 纯 Skills 项目，无额外依赖，克隆即用。

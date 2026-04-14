@@ -15,6 +15,24 @@
 | `/producthunt` | Product Hunt 今日热门产品 |
 | `/brief` | 每日简报，聚合以上所有信息源 |
 
+## tmux-claude-status
+
+tmux 插件，通过 Claude Code hooks 实时追踪所有 Claude 实例状态，`prefix + a` 弹窗查看。
+
+```bash
+# 安装（写入 hooks 到 ~/.claude/settings.json + tmux 快捷键）
+bash scripts/tmux-claude-status/install.sh
+
+# 卸载
+bash scripts/tmux-claude-status/install.sh --uninstall
+```
+
+文件结构：
+- `scripts/tmux-claude-status/status-hook.sh` — hook 脚本，事件触发时写状态到 `/tmp/claude-status/`
+- `scripts/tmux-claude-status/claude-status.sh` — 弹窗显示脚本
+- `scripts/tmux-claude-status/statusline.sh` — 状态栏组件，有 approval 时显示 ✨
+- `scripts/tmux-claude-status/install.sh` — 安装/卸载
+
 ## 配置
 
 配置文件位于 `~/.navi/config.toml`：

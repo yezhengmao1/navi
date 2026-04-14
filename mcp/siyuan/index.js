@@ -8,7 +8,7 @@ import { z } from "zod";
 
 const configPath = join(homedir(), ".navi", "config.toml");
 const config = parseToml(readFileSync(configPath, "utf-8"));
-const API_BASE = config.siyuan?.url || "http://127.0.0.1:6806";
+const API_BASE = (config.siyuan?.url || "http://127.0.0.1:6806").replace(/\/+$/, "");
 const API_TOKEN = config.siyuan?.token || "";
 
 async function api(endpoint, body = {}) {
