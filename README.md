@@ -4,7 +4,7 @@
 
 <h1 align="center">Navi - Hey Listen</h1>
 
-基于 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) Skills 构建的个人每日信息获取工具。几个斜杠命令，快速掌握今天该知道的事。
+基于 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) Skills 构建的个人助手。通过斜杠命令快速获取每日资讯、深度阅读论文、连接笔记系统，让 Claude 成为你的日常工作伙伴。
 
 ## 功能
 
