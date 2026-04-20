@@ -16,14 +16,34 @@ STATUSLINE_SCRIPT="$SCRIPT_DIR/statusline.sh"
 SETTINGS_FILE="$HOME/.claude/settings.json"
 TMUX_CONF="$HOME/.tmux.conf"
 
-HOOK_EVENTS=("SessionStart" "UserPromptSubmit" "PreToolUse" "PostToolUse" "PermissionRequest" "Stop" "Notification" "SessionEnd")
+HOOK_EVENTS=(
+  # State: idle
+  "SessionStart" "SessionEnd" "Stop"
+  # State: error
+  "StopFailure"
+  # State: thinking
+  "UserPromptSubmit" "PostToolUse" "PostToolUseFailure"
+  "PermissionDenied" "SubagentStart" "SubagentStop"
+  "PreCompact" "PostCompact" "ElicitationResult"
+  # State: tool_use
+  "PreToolUse"
+  # State: pending
+  "PermissionRequest" "Elicitation" "Notification"
+)
 
 # ── Uninstall ───────────────────────────────────────────────
 if [ "${1:-}" = "--uninstall" ]; then
   echo "Removing hooks from $SETTINGS_FILE ..."
   if [ -f "$SETTINGS_FILE" ]; then
+    # Only remove hook entries that reference our script, not the entire hooks object
     tmp=$(mktemp)
-    jq 'del(.hooks)' "$SETTINGS_FILE" > "$tmp" && mv "$tmp" "$SETTINGS_FILE"
+    jq --arg cmd "$HOOK_SCRIPT" '
+      .hooks |= (if . then
+        with_entries(
+          .value |= map(select(.hooks | all(.command != $cmd)))
+        ) | with_entries(select(.value | length > 0))
+      else . end)
+    ' "$SETTINGS_FILE" > "$tmp" && mv "$tmp" "$SETTINGS_FILE"
     echo "  Hooks removed."
   fi
 
@@ -46,12 +66,10 @@ if [ ! -f "$SETTINGS_FILE" ]; then
   echo '{}' > "$SETTINGS_FILE"
 fi
 
-# Build hooks object: each event maps to the same hook command
-hooks_json=$(jq -n --arg cmd "$HOOK_SCRIPT" '
-  [
-    "SessionStart", "UserPromptSubmit", "PreToolUse",
-    "PostToolUse", "PermissionRequest", "Stop", "Notification", "SessionEnd"
-  ] | reduce .[] as $event ({};
+# Build hooks object from HOOK_EVENTS array
+events_json=$(printf '%s\n' "${HOOK_EVENTS[@]}" | jq -R . | jq -s .)
+hooks_json=$(jq -n --arg cmd "$HOOK_SCRIPT" --argjson events "$events_json" '
+  $events | reduce .[] as $event ({};
     .[$event] = [{
       matcher: "",
       hooks: [{type: "command", command: $cmd}]
@@ -59,9 +77,19 @@ hooks_json=$(jq -n --arg cmd "$HOOK_SCRIPT" '
   )
 ')
 
-# Merge hooks into existing settings (preserve other keys, merge into existing hooks)
+# 1. Remove ALL existing hooks referencing our script (clean slate)
+# 2. Add only the events in HOOK_EVENTS
 tmp=$(mktemp)
-jq --argjson hooks "$hooks_json" '.hooks = ((.hooks // {}) * $hooks)' "$SETTINGS_FILE" > "$tmp" \
+jq --argjson hooks "$hooks_json" --arg cmd "$HOOK_SCRIPT" '
+  # First: remove our script from every event
+  .hooks |= (if . then
+    with_entries(
+      .value |= map(select(.hooks | all(.command != $cmd)))
+    ) | with_entries(select(.value | length > 0))
+  else {} end)
+  # Then: add our events
+  | .hooks = (.hooks * $hooks)
+' "$SETTINGS_FILE" > "$tmp" \
   && mv "$tmp" "$SETTINGS_FILE"
 
 echo "  Hooks written to $SETTINGS_FILE"

@@ -32,24 +32,27 @@ for f in "$STATUS_DIR"/*; do
   [ -f "$f" ] || continue
   line=$(<"$f")
 
-  # Inline field extraction — no subshells
-  state=${line##*'"state":"'}; state=${state%%'"'*}
-  detail=${line##*'"detail":"'}; detail=${detail%%'"'*}
-  cwd=${line##*'"cwd":"'}; cwd=${cwd%%'"'*}
-  pane=${line##*'"pane":"'}; pane=${pane%%'"'*}
+  # Extract JSON fields — use non-greedy (#) to match first occurrence
+  state=${line#*'"state":"'}; state=${state%%'"'*}
+  detail=${line#*'"detail":"'}; detail=${detail%%'"'*}
+  cwd=${line#*'"cwd":"'}; cwd=${cwd%%'"'*}
+  pane=${line#*'"pane":"'}; pane=${pane%%'"'*}
 
-  # Remove status files whose pane no longer exists
-  if [ -n "$pane" ] && [ ${#active_pane_set[@]} -gt 0 ]; then
-    if [ -z "${active_pane_set[$pane]:-}" ]; then
-      rm -f "$f"
-      continue
-    fi
+  # Remove status files whose pane no longer exists or was never set
+  if [ -z "$pane" ] || { [ ${#active_pane_set[@]} -gt 0 ] && [ -z "${active_pane_set[$pane]:-}" ]; }; then
+    rm -f "$f"
+    continue
   fi
 
-  # Show elapsed time for long-running tool use (stat in subshell only when needed)
-  if [ "$state" = "tool_use" ]; then
+  # For active states, check staleness (interrupted sessions leave stale state)
+  # Also show elapsed time for long-running operations
+  if [ "$state" != "idle" ] && [ "$state" != "error" ] && [ "$state" != "pending" ]; then
     file_age=$(( now - $(stat -c %Y "$f") ))
-    if [ "$file_age" -gt 10 ]; then
+    if [ "$file_age" -gt 300 ]; then
+      # >5min without update in an active state = likely interrupted
+      detail="stale (${state}>${file_age}s ago)"
+      state="idle"
+    elif [ "$file_age" -gt 10 ]; then
       if [ "$file_age" -ge 60 ]; then
         detail="${detail} ($((file_age / 60))m$((file_age % 60))s)"
       else
@@ -67,6 +70,7 @@ for f in "$STATUS_DIR"/*; do
     thinking) icon='*' color=33 ;;
     tool_use) icon='>' color=36 ;;
     pending)  icon='!' color=31 ;;
+    error)    icon=x color=31 ;;
     *)        icon='?' color=37 ;;
   esac
 
