@@ -131,13 +131,20 @@
       50%      { background: rgba(234, 88, 12, 0.08); }
     }
     #pending-bell {
-      display: none; align-items: center; gap: 6px;
-      padding: 3px 9px; border-radius: 999px;
-      background: rgba(234, 88, 12, 0.12); color: var(--accent);
-      font-size: 11px; font-weight: 600; letter-spacing: 0.03em;
+      display: none; position: fixed; z-index: 9999;
+      top: 20px; right: 20px;
+      align-items: center; gap: 8px;
+      padding: 8px 14px; border-radius: 999px;
+      background: var(--bg-elev); color: var(--accent);
+      border: 1px solid var(--accent);
+      box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+      font-size: 12px; font-weight: 600; letter-spacing: 0.03em;
+      cursor: grab; user-select: none;
       animation: pending-row 2.4s ease-in-out infinite;
     }
     #pending-bell.visible { display: inline-flex; }
+    #pending-bell.dragging { cursor: grabbing; animation: none; }
+    #pending-bell .bell-icon { font-size: 14px; line-height: 1; }
     #pending-bell .dot {
       width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
       animation: pending-dot 1.4s ease-in-out infinite;
@@ -193,7 +200,11 @@
       font-size: 12px; font-weight: 500;
       opacity: 0; transform: translateY(8px);
       transition: opacity 160ms, transform 160ms;
-      pointer-events: none; z-index: 200;
+      /* Drag-enabled: auto pointer-events so mouse can grab it.
+         JS clamps to viewport and persists position in localStorage.
+         Double-click resets to the default bottom-right corner. */
+      pointer-events: auto; z-index: 200;
+      user-select: none; cursor: move;
     }
     #toast.visible { opacity: 1; transform: translateY(0); }
     #empty {
@@ -267,17 +278,21 @@
     <header>
       <h1>Claude Panes</h1>
       <span class="head-right">
-        <span id="pending-bell" title="Approvals are waiting"><span class="dot"></span><span id="pending-count">0</span></span>
         <button id="new-pane-btn" title="Launch a new claude session on a host">+ New</button>
         <span id="conn">connecting…</span>
       </span>
     </header>
+    <div id="pending-bell" title="Approvals are waiting — drag to move, click to jump">
+      <span class="bell-icon">&#9873;</span>
+      <span class="dot"></span>
+      <span id="pending-count">0</span>
+    </div>
     <div id="panes-list"></div>
   </aside>
   <div id="modal-backdrop">
     <div id="modal">
       <h2>New claude window (in <code>cc</code> session)</h2>
-      <label>Host
+      <label style="display:none">Host
         <select id="new-host"></select>
       </label>
       <label>Working directory
@@ -314,6 +329,8 @@
       <span class="zoom-sep"></span>
       <button id="fit-btn" title="Resize tmux pane to match the browser viewport">Fit pane</button>
       <button id="copy-btn" title="Copy selection (or whole screen if nothing is selected)">Copy</button>
+      <button id="page-up-btn"   title="Scroll up one page (PageUp / Shift+wheel)">PgUp</button>
+      <button id="page-down-btn" title="Scroll down one page (PageDown / Shift+wheel)">PgDn</button>
       <button id="exit-scroll-btn" title="Leave tmux copy-mode and jump back to live" style="display:none">Exit scroll</button>
       <span style="flex:1"></span>
       <span class="hint" style="background:transparent;padding:0">Double-click a pane name to rename.</span>
