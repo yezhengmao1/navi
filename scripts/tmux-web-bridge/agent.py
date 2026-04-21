@@ -55,6 +55,16 @@ def _read_status_overlay() -> dict[str, dict]:
     """Map of pane_id -> claude-status fields, for panes that wrote a hook file."""
     if not STATUS_DIR.exists():
         return {}
+    # Claude Code's default-mode permission dialog fires no hook on user
+    # rejection — `PermissionDenied` only runs in auto mode. If the user
+    # clicks Deny, the status file stays "pending" until Claude itself
+    # fires another event (next PreToolUse / UserPromptSubmit / Stop).
+    # When Claude is silent after a Deny (no follow-up tool, no text
+    # response) pending sticks indefinitely. 30 s without a status
+    # refresh is our cue to demote pending to idle so the sidebar /
+    # floating bell / OS notification stop insisting.
+    PENDING_MAX_AGE = 30.0
+    now = time.time()
     overlay: dict[str, dict] = {}
     live_keys: set[str] = set()
     for f in STATUS_DIR.iterdir():
@@ -85,10 +95,15 @@ def _read_status_overlay() -> dict[str, dict]:
         pane = d.get("pane") or ""
         if not pane:
             continue
+        state = d.get("state", "")
+        detail = d.get("detail", "")
+        if state == "pending" and (now - mtime) > PENDING_MAX_AGE:
+            state = "idle"
+            detail = "pending dismissed"
         overlay[pane] = {
             "session_id": f.name,
-            "state": d.get("state", ""),
-            "detail": d.get("detail", ""),
+            "state": state,
+            "detail": detail,
             "timestamp": d.get("timestamp", ""),
         }
     # Drop cache entries for files that have gone away.
