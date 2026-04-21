@@ -1254,7 +1254,23 @@ function autoGrow() {
 
 sendBtn.addEventListener("click", sendInput);
 inputEl.addEventListener("input", autoGrow);
+// Android / GBoard / SwiftKey soft keyboards frequently skip firing a real
+// `keydown` for the Enter key and only emit a beforeinput with
+// `inputType === "insertLineBreak"`. Without this handler, tapping Enter
+// on mobile just inserts a newline into the textarea and never sends.
+inputEl.addEventListener("beforeinput", (e) => {
+  if (e.inputType !== "insertLineBreak") return;
+  // Shift+Enter should still insert a newline on desktop; on soft keyboards
+  // there's no shift state here, so any line-break is treated as send.
+  e.preventDefault();
+  sendInput();
+});
 inputEl.addEventListener("keydown", (e) => {
+  // While an IME (Chinese/Japanese/Korean pinyin etc.) is composing,
+  // Enter is the commit keystroke for the IME candidate, not a "send".
+  // Swallowing it here would also eat the commit and leave the textarea
+  // stuck with half-typed pinyin.
+  if (e.isComposing || e.keyCode === 229) return;
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
     sendInput();
