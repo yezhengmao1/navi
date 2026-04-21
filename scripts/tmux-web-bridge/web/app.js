@@ -1,6 +1,12 @@
 "use strict";
 
-const wsUrl = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws";
+// The page is loaded with ?token=... guarding it; carry the same token over
+// to the WebSocket URL so the server's auth middleware lets us through.
+const _urlToken = new URLSearchParams(location.search).get("token") || "";
+const _wsQs = _urlToken ? ("?token=" + encodeURIComponent(_urlToken)) : "";
+const wsUrl =
+  (location.protocol === "https:" ? "wss://" : "ws://") +
+  location.host + "/ws" + _wsQs;
 
 const canvas      = document.getElementById("term");
 const termWrap    = document.getElementById("term-wrap");

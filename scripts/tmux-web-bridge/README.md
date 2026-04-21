@@ -139,7 +139,8 @@ Server → agent:
 ## Security
 
 - **All browsers connected to the server can inject keystrokes into every Claude pane on every agent** — equivalent to remote shell access. Protect the server endpoint accordingly (VPN, reverse proxy with auth, or SSH tunnel).
-- The agent ↔ server token is the only access control in the MVP. Use a 128-bit random token.
+- The same `--token` gates the agent ↔ server handshake *and* the browser. Open the UI with the token in the URL: `http://<server>:8787/?token=<BRIDGE_TOKEN>`. The server returns 401 for any browser request (`/`, `/app.js`, `/ws`) whose `?token=` query param doesn't match. The token-bearing `<script src>` and WebSocket URL are generated server-side / client-side so the token flows automatically to `/app.js` and `/ws`.
+- If `--token` is empty the gate is disabled (same as before). Don't run without a token on an untrusted network.
 - For ad-hoc remote use without exposing ports, run the server locally and SSH-tunnel the agent:
   ```bash
   ssh -R 8787:127.0.0.1:8787 <tmux-box>
