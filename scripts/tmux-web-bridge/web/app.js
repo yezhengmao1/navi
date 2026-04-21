@@ -639,6 +639,9 @@ function showToast(msg) {
 
 canvas.addEventListener("mousedown", (e) => {
   if (e.button !== 0) return;
+  // Ignore the compatibility mousedown that browsers fire after a touch tap
+  // — otherwise every scroll-swipe starts a selection rectangle.
+  if (_touchActive || Date.now() < _touchBlockMouseUntil) return;
   if (cellW <= 0 || cellH <= 0 || lastCols <= 0 || lastRows <= 0) return;
   const cell = pixelToCell(e);
   const prevS = selStart, prevE = selEnd;
@@ -679,6 +682,80 @@ if (exitScrollBtn) {
     if (!inputEl.disabled) inputEl.focus();
   });
 }
+
+// ── Mobile drawer ──────────────────────────────────────────
+const sidebarEl = document.getElementById("sidebar");
+const sidebarBackdrop = document.getElementById("sidebar-backdrop");
+const mobileMenuBtn = document.getElementById("mobile-menu-btn");
+const _mq = window.matchMedia("(max-width: 720px)");
+const isMobile = () => _mq.matches;
+
+function openSidebar() {
+  sidebarEl.classList.add("open");
+  sidebarBackdrop.classList.add("visible");
+}
+function closeSidebar() {
+  sidebarEl.classList.remove("open");
+  sidebarBackdrop.classList.remove("visible");
+}
+if (mobileMenuBtn) mobileMenuBtn.addEventListener("click", openSidebar);
+if (sidebarBackdrop) sidebarBackdrop.addEventListener("click", closeSidebar);
+// Returning to desktop width: discard any open/backdrop state so the
+// sidebar displays inline again without being frozen in the drawer pose.
+_mq.addEventListener?.("change", (e) => { if (!e.matches) closeSidebar(); });
+
+// ── Touch gestures on the terminal ─────────────────────────
+// Browsers synthesise mousedown/mousemove/mouseup after a touch tap; those
+// would kick off a "selection drag" that's not useful on mobile (and is
+// hard to cancel with no Esc key). Track an active-touch flag and bail
+// out of the mouse path whenever one is in progress.
+let _touchActive = false;
+let _touchBlockMouseUntil = 0;
+let _touchStartY = null;
+let _touchLastScrollAt = 0;
+
+function _touchGestureSettle() {
+  // Ignore mouse events for 400ms after the touch ends — that's the window
+  // in which browsers fire the compatibility mousedown.
+  _touchActive = false;
+  _touchBlockMouseUntil = Date.now() + 400;
+  _touchStartY = null;
+}
+
+termWrap.addEventListener("touchstart", (e) => {
+  if (e.touches.length !== 1) { _touchStartY = null; return; }
+  _touchActive = true;
+  _touchStartY = e.touches[0].clientY;
+}, { passive: true });
+
+termWrap.addEventListener("touchmove", (e) => {
+  if (!_touchActive || _touchStartY == null) return;
+  if (e.touches.length !== 1) return;
+  const y = e.touches[0].clientY;
+  const dy = _touchStartY - y;   // >0: swipe up = reveal content below
+  const THRESH = 50;
+  if (Math.abs(dy) < THRESH) { e.preventDefault(); return; }
+  // Rate-limit one page scroll per 160ms so a long swipe paginates rather
+  // than shooting through the whole scrollback in one frame.
+  const now = Date.now();
+  if (now - _touchLastScrollAt < 160) { e.preventDefault(); return; }
+  _touchLastScrollAt = now;
+  if (dy > 0) {
+    // At live bottom already: exit copy-mode instead of spamming page_down.
+    if (lastGrid && lastGrid.in_copy_mode && (lastGrid.scroll_position || 0) <= 0) {
+      sendScroll("exit");
+    } else {
+      sendScroll("page_down");
+    }
+  } else {
+    sendScroll("page_up");
+  }
+  _touchStartY = y;   // re-anchor so the next delta is measured fresh
+  e.preventDefault();
+}, { passive: false });
+
+termWrap.addEventListener("touchend", _touchGestureSettle, { passive: true });
+termWrap.addEventListener("touchcancel", _touchGestureSettle, { passive: true });
 
 const pageUpBtn = document.getElementById("page-up-btn");
 const pageDownBtn = document.getElementById("page-down-btn");
@@ -985,71 +1062,124 @@ function _clampBellToViewport() {
   }
 }
 (function initBellDrag() {
+  const PAD = 4;
+
+  // Restore last-saved position (written on drag-end). If the viewport
+  // shrank since then the follow-up clamp will pull it back into view.
   const saved = localStorage.getItem(BELL_POS_KEY);
   if (saved) {
     try {
       const { left, top } = JSON.parse(saved);
-      if (typeof left === "number" && typeof top === "number") {
+      if (Number.isFinite(left) && Number.isFinite(top)) {
         pendingBell.style.left = left + "px";
-        pendingBell.style.top = top + "px";
+        pendingBell.style.top  = top  + "px";
         pendingBell.style.right = "auto";
+        pendingBell.style.bottom = "auto";
       }
     } catch {}
   }
-  // Clamp on load and on resize so a saved position from a larger viewport
-  // can't leave the bell stranded outside the visible area.
   _clampBellToViewport();
   window.addEventListener("resize", _clampBellToViewport);
-  let dragging = false, moved = false;
-  let startX = 0, startY = 0, origLeft = 0, origTop = 0;
+
+  let dragging = false;
+  let moved = false;
+  let pointerId = null;
+  // Offset from the pointer to the bell's top-left at drag start. We use
+  // this instead of a delta so the bell stays anchored to the user's
+  // finger/cursor — a delta-based drag ends up visibly lagging or jumping
+  // when an animated element has transforms/scaling applied.
+  let grabX = 0, grabY = 0;
+  let startLeft = 0, startTop = 0;
+
+  function _pin(r) {
+    // Commit the rendered position as absolute left/top, wiping any
+    // right/bottom anchors so the style.left we set next actually moves it.
+    pendingBell.style.left = r.left + "px";
+    pendingBell.style.top  = r.top  + "px";
+    pendingBell.style.right  = "auto";
+    pendingBell.style.bottom = "auto";
+  }
+
   pendingBell.addEventListener("pointerdown", (e) => {
-    dragging = true; moved = false;
+    // Only the primary button (or touch/pen) should start a drag.
+    if (e.button !== undefined && e.button !== 0) return;
     const r = pendingBell.getBoundingClientRect();
-    origLeft = r.left; origTop = r.top;
-    startX = e.clientX; startY = e.clientY;
-    pendingBell.setPointerCapture(e.pointerId);
+    grabX = e.clientX - r.left;
+    grabY = e.clientY - r.top;
+    startLeft = r.left; startTop = r.top;
+    _pin(r);
+    dragging = true; moved = false;
+    pointerId = e.pointerId;
+    try { pendingBell.setPointerCapture(e.pointerId); } catch {}
     pendingBell.classList.add("dragging");
+    // Block the browser's own gesture handling (text selection on mouse,
+    // scroll/tap-zoom on touch).
+    e.preventDefault();
   });
+
   pendingBell.addEventListener("pointermove", (e) => {
-    if (!dragging) return;
-    const dx = e.clientX - startX, dy = e.clientY - startY;
-    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) moved = true;
+    if (!dragging || e.pointerId !== pointerId) return;
     const w = pendingBell.offsetWidth, h = pendingBell.offsetHeight;
-    const left = Math.max(0, Math.min(window.innerWidth - w, origLeft + dx));
-    const top  = Math.max(0, Math.min(window.innerHeight - h, origTop + dy));
+    let left = e.clientX - grabX;
+    let top  = e.clientY - grabY;
+    left = Math.max(PAD, Math.min(window.innerWidth  - w - PAD, left));
+    top  = Math.max(PAD, Math.min(window.innerHeight - h - PAD, top));
+    if (!moved &&
+        (Math.abs(left - startLeft) > 4 || Math.abs(top - startTop) > 4)) {
+      moved = true;
+    }
     pendingBell.style.left = left + "px";
-    pendingBell.style.top = top + "px";
-    pendingBell.style.right = "auto";
+    pendingBell.style.top  = top  + "px";
+    e.preventDefault();
   });
-  pendingBell.addEventListener("pointerup", (e) => {
-    if (!dragging) return;
+
+  function _finishDrag(e) {
+    if (!dragging || (e && e.pointerId !== pointerId)) return;
     dragging = false;
     pendingBell.classList.remove("dragging");
-    try { pendingBell.releasePointerCapture(e.pointerId); } catch {}
+    try { pendingBell.releasePointerCapture(pointerId); } catch {}
     if (moved) {
       const r = pendingBell.getBoundingClientRect();
-      localStorage.setItem(BELL_POS_KEY, JSON.stringify({ left: r.left, top: r.top }));
+      try {
+        localStorage.setItem(
+          BELL_POS_KEY,
+          JSON.stringify({ left: r.left, top: r.top }),
+        );
+      } catch {}
     }
-  });
+  }
+  pendingBell.addEventListener("pointerup", _finishDrag);
+  pendingBell.addEventListener("pointercancel", _finishDrag);
+
   pendingBell.addEventListener("click", (e) => {
-    if (moved) { e.preventDefault(); e.stopPropagation(); return; }
+    // A drag ends with a pointerup that also triggers a click; suppress
+    // that so the user doesn't jump to a pane after merely repositioning.
+    if (moved) {
+      e.preventDefault(); e.stopPropagation();
+      moved = false;
+      return;
+    }
     const target = panes.find((p) => p.state === "pending");
     if (target) selectPane(target.key);
   });
-  // Double-click resets the bell to its default top-right corner so a user
-  // can always recover from dragging it off-screen.
+
+  // Double-click restores the default top-right corner so a bell dragged
+  // off-screen (e.g. from a previously-wider viewport) is always recoverable.
   pendingBell.addEventListener("dblclick", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    localStorage.removeItem(BELL_POS_KEY);
+    e.preventDefault(); e.stopPropagation();
+    try { localStorage.removeItem(BELL_POS_KEY); } catch {}
     pendingBell.style.left = "";
     pendingBell.style.top = "";
     pendingBell.style.right = "";
+    pendingBell.style.bottom = "";
   });
 })();
 
 function selectPane(key) {
-  if (key === activeKey) return;
+  if (key === activeKey) {
+    if (isMobile()) closeSidebar();
+    return;
+  }
   if (ws && ws.readyState === WebSocket.OPEN && activeKey) {
     ws.send(JSON.stringify({ type: "unsubscribe", key: activeKey }));
   }
@@ -1061,6 +1191,9 @@ function selectPane(key) {
     ws.send(JSON.stringify({ type: "subscribe", key }));
   }
   renderPanes();
+  // On mobile the sidebar is a drawer — close it so the pane we just
+  // picked actually gets shown instead of being hidden behind the drawer.
+  if (isMobile()) closeSidebar();
 }
 
 function updateActiveUI() {
@@ -1073,7 +1206,10 @@ function updateActiveUI() {
   keyBtns.forEach((b) => { b.disabled = !active; });
   fitBtn.disabled = !active;
   if (killBtn) killBtn.disabled = !active;
-  if (active) inputEl.focus();
+  // Auto-focus on desktop is convenient; on mobile it pops the virtual
+  // keyboard the instant you pick a pane, burying the terminal. Let the
+  // user tap the textarea when they actually want to type.
+  if (active && !isMobile()) inputEl.focus();
 }
 
 function killActivePane() {
