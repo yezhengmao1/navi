@@ -51,8 +51,18 @@ TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 PANE="${TMUX_PANE:-}"
 
 write_status() {
-  printf '{"timestamp":"%s","cwd":"%s","state":"%s","detail":"%s","pane":"%s"}\n' \
-    "$TIMESTAMP" "$CWD" "$1" "${2//\"/\\\"}" "$PANE" > "$STATUS_FILE"
+  # Build the JSON with jq so backslashes, quotes, control chars, and
+  # non-ASCII bytes in $2 (detail) get properly escaped. A previous hand-
+  # rolled printf only escaped `"`, which produced invalid JSON when the
+  # command contained `\.` or similar — readers then dropped the pane.
+  jq -cn \
+    --arg ts     "$TIMESTAMP" \
+    --arg cwd    "$CWD" \
+    --arg state  "$1" \
+    --arg detail "$2" \
+    --arg pane   "$PANE" \
+    '{timestamp:$ts, cwd:$cwd, state:$state, detail:$detail, pane:$pane}' \
+    > "$STATUS_FILE"
 }
 
 case "$EVENT" in
