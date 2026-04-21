@@ -46,17 +46,41 @@ async def tmux(*args: str) -> tuple[int, bytes, bytes]:
     return (proc.returncode or 0), out, err
 
 
+# Per-file last-good parse, so a transient read/JSON error doesn't make a
+# pane vanish from the sidebar. Keyed by status-file path.
+_OVERLAY_CACHE: dict[str, tuple[float, dict]] = {}
+
+
 def _read_status_overlay() -> dict[str, dict]:
     """Map of pane_id -> claude-status fields, for panes that wrote a hook file."""
     if not STATUS_DIR.exists():
         return {}
     overlay: dict[str, dict] = {}
+    live_keys: set[str] = set()
     for f in STATUS_DIR.iterdir():
         if not f.is_file():
             continue
+        key = str(f)
+        live_keys.add(key)
         try:
-            d = json.loads(f.read_text())
-        except Exception:
+            st = f.stat()
+            mtime = st.st_mtime
+        except OSError:
+            continue
+        cached = _OVERLAY_CACHE.get(key)
+        d: dict | None = None
+        if cached is not None and cached[0] == mtime:
+            d = cached[1]
+        else:
+            try:
+                d = json.loads(f.read_text())
+                _OVERLAY_CACHE[key] = (mtime, d)
+            except Exception:
+                # Fall back to the last good parse so a pane mid-rewrite or
+                # a transiently-malformed file doesn't drop the sidebar row.
+                if cached is not None:
+                    d = cached[1]
+        if not d:
             continue
         pane = d.get("pane") or ""
         if not pane:
@@ -67,6 +91,10 @@ def _read_status_overlay() -> dict[str, dict]:
             "detail": d.get("detail", ""),
             "timestamp": d.get("timestamp", ""),
         }
+    # Drop cache entries for files that have gone away.
+    for stale in list(_OVERLAY_CACHE.keys()):
+        if stale not in live_keys:
+            _OVERLAY_CACHE.pop(stale, None)
     return overlay
 
 
@@ -201,6 +229,16 @@ async def scroll_pane(pane_id: str, action: str) -> None:
             await tmux("copy-mode", "-t", pane_id)
         else:
             return
+    # If we're in copy-mode already at the bottom (scroll_position == 0), any
+    # further "down" scroll just wastes a round-trip — exit copy-mode instead
+    # so the viewport snaps back to the live pane.
+    if action in ("down", "page_down"):
+        info = await pane_info(pane_id)
+        if info is not None:
+            _, _, sp, in_mode = info
+            if in_mode and sp <= 0:
+                await tmux("send-keys", "-t", pane_id, "-X", "cancel")
+                return
     cmd = {
         "up":        "scroll-up",
         "down":      "scroll-down",
