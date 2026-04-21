@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>tmux-web-bridge</title>
+  <style>
+    :root {
+      color-scheme: light;
+      /* Warm Solarized-light-inspired palette for higher contrast. */
+      --bg:             #f5ead0;   /* sidebar / page bg */
+      --bg-elev:        #fdf6e3;   /* elevated surfaces */
+      --border:         #d8c6a0;
+      --border-strong:  #b89e6d;
+      --text:           #3a2e1f;   /* dark warm brown */
+      --text-dim:       #7a6850;
+      --accent:         #cb4b16;   /* burnt orange */
+      --accent-soft:    #fbe3c8;
+      --term-bg:        #fdf6e3;
+      --term-fg:        #3a2e1f;
+    }
+    html, body { margin: 0; height: 100%; }
+    body {
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg); color: var(--text);
+      display: flex; height: 100vh; overflow: hidden;
+    }
+    #sidebar {
+      width: 280px; min-width: 280px;
+      border-right: 1px solid var(--border);
+      display: flex; flex-direction: column;
+      background: var(--bg-elev);
+    }
+    #sidebar header {
+      padding: 14px 14px 10px; border-bottom: 1px solid var(--border);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    #sidebar header h1 { font-size: 13px; font-weight: 600; margin: 0; color: var(--text-dim); letter-spacing: 0.04em; text-transform: uppercase; }
+    #sidebar header .head-right { display: flex; gap: 8px; align-items: center; }
+    #new-pane-btn {
+      background: var(--accent); color: #fff; border: none; border-radius: 5px;
+      padding: 3px 10px; font-size: 11px; font-weight: 600; cursor: pointer;
+      letter-spacing: 0.03em;
+    }
+    #new-pane-btn:hover { background: #a33c0d; }
+    #new-pane-btn:disabled { background: #cbd0dc; cursor: not-allowed; }
+    #conn { font-size: 11px; color: var(--text-dim); }
+    #modal-backdrop {
+      position: fixed; inset: 0; background: rgba(20, 24, 35, 0.35);
+      display: none; align-items: center; justify-content: center; z-index: 100;
+    }
+    #modal-backdrop.open { display: flex; }
+    #modal {
+      background: #fff; border-radius: 10px; padding: 18px 20px 16px;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.2);
+      width: 420px; max-width: 90vw;
+      display: flex; flex-direction: column; gap: 12px;
+    }
+    #modal h2 { margin: 0; font-size: 15px; font-weight: 600; }
+    #modal label { font-size: 12px; color: var(--text-dim); display: flex; flex-direction: column; gap: 4px; }
+    #modal input, #modal select {
+      padding: 8px 10px; font-size: 13px; border: 1px solid var(--border-strong);
+      border-radius: 6px; outline: none; font-family: ui-monospace, monospace;
+    }
+    #modal input:focus, #modal select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+    #modal .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; }
+    #modal button {
+      padding: 6px 14px; border-radius: 5px; font-size: 12px; cursor: pointer;
+      border: 1px solid var(--border-strong); background: #fff; font-weight: 500;
+    }
+    #modal button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+    #modal button.primary:hover { background: #a33c0d; }
+    #modal .error { color: #dc2626; font-size: 12px; min-height: 16px; }
+    #conn.ok  { color: #16a34a; }
+    #conn.err { color: #dc2626; }
+    #panes-list { flex: 1; overflow-y: auto; }
+    .pane-item {
+      padding: 10px 14px; border-bottom: 1px solid var(--border);
+      cursor: pointer; user-select: none;
+    }
+    .pane-item:hover { background: #f0e2c2; }
+    .pane-item.active { background: var(--accent-soft); border-left: 3px solid var(--accent); padding-left: 11px; }
+    .pane-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px; gap: 6px; }
+    .pane-proj {
+      font-weight: 600; color: var(--text); font-size: 13px;
+      flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .pane-proj[contenteditable="true"] {
+      outline: 1px dashed var(--accent);
+      background: #fff; cursor: text; overflow: visible; text-overflow: clip;
+    }
+    .pane-state {
+      font-size: 11px; padding: 2px 6px; border-radius: 3px;
+      background: #e5e7eb; color: #4b5563;
+      position: relative;
+      display: inline-flex; align-items: center; gap: 5px;
+    }
+    .pane-state.state-idle     { color: #166534; background: #dcfce7; }
+    .pane-state.state-thinking { color: #854d0e; background: #fef9c3; }
+    .pane-state.state-tool_use { color: #155e75; background: #cffafe; }
+    .pane-state.state-pending  { color: #9a3412; background: #ffedd5; font-weight: 600; }
+    .pane-state.state-error    { color: #991b1b; background: #fee2e2; }
+    /* Pending-approval attention: pulse ring + a soft glowing dot on the
+       badge, plus a gentle row-level wash. Calm, not alarmy. */
+    .pane-state.state-pending::before {
+      content: ""; position: absolute; inset: 0; border-radius: inherit;
+      box-shadow: 0 0 0 0 rgba(234, 88, 12, 0.55);
+      animation: pending-pulse 1.6s ease-out infinite;
+      pointer-events: none;
+    }
+    .pane-state.state-pending::after {
+      content: ""; width: 6px; height: 6px; border-radius: 50%;
+      background: #ea580c; flex: none;
+      animation: pending-dot 1.6s ease-in-out infinite;
+    }
+    @keyframes pending-pulse {
+      0%   { box-shadow: 0 0 0 0 rgba(234, 88, 12, 0.55); }
+      70%  { box-shadow: 0 0 0 10px rgba(234, 88, 12, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(234, 88, 12, 0); }
+    }
+    @keyframes pending-dot {
+      0%, 100% { opacity: 0.4; transform: scale(0.85); }
+      50%      { opacity: 1;   transform: scale(1.15); }
+    }
+    .pane-item.has-pending {
+      animation: pending-row 2.4s ease-in-out infinite;
+    }
+    .pane-item.has-pending.active { animation: none; }
+    @keyframes pending-row {
+      0%, 100% { background: transparent; }
+      50%      { background: rgba(234, 88, 12, 0.08); }
+    }
+    #pending-bell {
+      display: none; align-items: center; gap: 6px;
+      padding: 3px 9px; border-radius: 999px;
+      background: rgba(234, 88, 12, 0.12); color: var(--accent);
+      font-size: 11px; font-weight: 600; letter-spacing: 0.03em;
+      animation: pending-row 2.4s ease-in-out infinite;
+    }
+    #pending-bell.visible { display: inline-flex; }
+    #pending-bell .dot {
+      width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
+      animation: pending-dot 1.4s ease-in-out infinite;
+    }
+    .pane-meta { font-size: 11px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pane-path {
+      font-size: 11px; color: var(--text-dim); margin-top: 2px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      direction: rtl; text-align: left; unicode-bidi: plaintext;
+    }
+    .host-label {
+      padding: 10px 14px 4px; font-size: 11px; font-weight: 600;
+      color: var(--accent); letter-spacing: 0.05em; text-transform: uppercase;
+      border-bottom: 1px solid var(--border);
+    }
+
+    #main { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--bg); }
+    #toolbar {
+      display: flex; gap: 8px; align-items: center;
+      padding: 6px 10px; border-bottom: 1px solid var(--border);
+      background: var(--bg-elev); font-size: 12px; color: var(--text-dim);
+    }
+    #toolbar button {
+      background: var(--bg); color: var(--text);
+      border: 1px solid var(--border-strong); border-radius: 4px;
+      padding: 3px 9px; font-size: 12px; cursor: pointer;
+    }
+    #toolbar button:hover { background: #f0e2c2; }
+    #toolbar button.danger {
+      background: var(--accent); color: #fff; border-color: var(--accent);
+      font-weight: 600;
+    }
+    #toolbar button.danger:hover { background: #a33c0d; border-color: #a33c0d; }
+    .zoom-group { display: inline-flex; align-items: center; gap: 5px; }
+    .zoom-label {
+      font-size: 11px; font-weight: 600; color: var(--text-dim);
+      text-transform: uppercase; letter-spacing: 0.05em; margin-right: 2px;
+    }
+    .zoom-sep { width: 1px; height: 18px; background: var(--border); margin: 0 4px; }
+    #term-zoom-val, #ui-zoom-val {
+      min-width: 42px; text-align: center; font-variant-numeric: tabular-nums;
+    }
+    #term-wrap {
+      flex: 1; background: var(--term-bg); min-height: 0;
+      overflow: hidden; padding: 6px;
+    }
+    #term { display: block; image-rendering: pixelated; cursor: text; }
+    #toast {
+      position: fixed; right: 18px; bottom: 18px;
+      background: rgba(58, 46, 31, 0.92); color: var(--bg-elev);
+      padding: 8px 14px; border-radius: 6px;
+      font-size: 12px; font-weight: 500;
+      opacity: 0; transform: translateY(8px);
+      transition: opacity 160ms, transform 160ms;
+      pointer-events: none; z-index: 200;
+    }
+    #toast.visible { opacity: 1; transform: translateY(0); }
+    #empty {
+      flex: 1; display: flex; align-items: center; justify-content: center;
+      color: var(--text-dim); font-size: 13px;
+    }
+
+    #input-bar {
+      border-top: 1px solid var(--border); padding: 12px 14px 14px;
+      background: var(--bg-elev);
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .key-row {
+      display: flex; gap: 6px; align-items: center;
+    }
+    .key-row-label {
+      font-size: 11px; color: var(--text-dim); margin-right: 4px;
+      letter-spacing: 0.04em; text-transform: uppercase; font-weight: 600;
+    }
+    .key-row-sep {
+      width: 1px; align-self: stretch; background: var(--border);
+      margin: 2px 4px;
+    }
+    .key-btn {
+      background: #fff; color: var(--text);
+      border: 1px solid var(--border-strong); border-radius: 6px;
+      padding: 0 10px; height: 36px; width: 56px; box-sizing: border-box;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 14px; line-height: 1; cursor: pointer; user-select: none;
+      display: inline-flex; align-items: center; justify-content: center;
+      flex: 0 0 auto;
+      transition: background 80ms, border-color 80ms, box-shadow 80ms;
+      box-shadow: 0 1px 0 rgba(16, 22, 45, 0.04);
+    }
+    .key-btn:hover   { background: #f0e2c2; border-color: var(--accent); }
+    .key-btn:active  { background: var(--accent-soft); transform: translateY(1px); box-shadow: none; }
+    .key-btn:disabled { background: #f1f2f5; color: #aaa; cursor: not-allowed; border-color: var(--border); box-shadow: none; }
+    .key-btn.primary {
+      background: #1e6fb4; color: #fff; border-color: #1e6fb4;
+      font-family: inherit; font-weight: 600; width: 88px; margin-left: auto;
+    }
+    .key-btn.primary:hover { background: #175a93; border-color: #175a93; }
+    .key-btn.primary:disabled { background: #cbd0dc; color: #eef0f5; border-color: #cbd0dc; }
+    .key-btn.danger {
+      background: var(--accent); color: #fff; border-color: var(--accent);
+      font-family: inherit; font-weight: 600; width: 88px;
+    }
+    .key-btn.danger:hover { background: #a33c0d; border-color: #a33c0d; }
+    .key-btn.danger:disabled { background: #cbd0dc; color: #eef0f5; border-color: #cbd0dc; }
+    .text-row {
+      display: flex;
+    }
+    #input {
+      flex: 1; width: 100%; background: #ffffff; color: var(--text);
+      border: 1px solid var(--border-strong); border-radius: 8px;
+      padding: 12px 14px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 15px; line-height: 1.5; resize: vertical;
+      min-height: 96px; max-height: 360px;
+      outline: none;
+      caret-color: var(--accent);
+      transition: border-color 100ms, box-shadow 100ms;
+      box-shadow: inset 0 1px 0 rgba(16, 22, 45, 0.02);
+    }
+    #input::placeholder { color: #9aa0ad; }
+    #input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+    .hint { font-size: 11px; color: var(--text-dim); padding: 0 10px 8px; background: var(--bg-elev); }
+  </style>
+</head>
+<body>
+  <aside id="sidebar">
+    <header>
+      <h1>Claude Panes</h1>
+      <span class="head-right">
+        <span id="pending-bell" title="Approvals are waiting"><span class="dot"></span><span id="pending-count">0</span></span>
+        <button id="new-pane-btn" title="Launch a new claude session on a host">+ New</button>
+        <span id="conn">connecting…</span>
+      </span>
+    </header>
+    <div id="panes-list"></div>
+  </aside>
+  <div id="modal-backdrop">
+    <div id="modal">
+      <h2>New claude window (in <code>cc</code> session)</h2>
+      <label>Host
+        <select id="new-host"></select>
+      </label>
+      <label>Working directory
+        <input id="new-cwd" type="text" placeholder="/absolute/path" spellcheck="false">
+      </label>
+      <label>Window name <span style="opacity:0.6">(optional, defaults to directory name)</span>
+        <input id="new-session" type="text" placeholder="e.g. navi" spellcheck="false">
+      </label>
+      <div class="error" id="new-error"></div>
+      <div class="row">
+        <button id="new-cancel">Cancel</button>
+        <button id="new-submit" class="primary">Launch</button>
+      </div>
+    </div>
+  </div>
+  <main id="main">
+    <div id="empty">Select a pane on the left.</div>
+    <div id="toolbar" style="display:none">
+      <span class="zoom-group">
+        <span class="zoom-label">Term</span>
+        <button id="term-zoom-out" title="Terminal smaller">−</button>
+        <span id="term-zoom-val">100%</span>
+        <button id="term-zoom-in" title="Terminal bigger">+</button>
+        <button id="term-zoom-reset" title="Reset terminal zoom">Reset</button>
+      </span>
+      <span class="zoom-sep"></span>
+      <span class="zoom-group">
+        <span class="zoom-label">UI</span>
+        <button id="ui-zoom-out" title="UI smaller">−</button>
+        <span id="ui-zoom-val">100%</span>
+        <button id="ui-zoom-in" title="UI bigger">+</button>
+        <button id="ui-zoom-reset" title="Reset UI zoom">Reset</button>
+      </span>
+      <span class="zoom-sep"></span>
+      <button id="fit-btn" title="Resize tmux pane to match the browser viewport">Fit pane</button>
+      <button id="copy-btn" title="Copy selection (or whole screen if nothing is selected)">Copy</button>
+      <button id="exit-scroll-btn" title="Leave tmux copy-mode and jump back to live" style="display:none">Exit scroll</button>
+      <span style="flex:1"></span>
+      <span class="hint" style="background:transparent;padding:0">Double-click a pane name to rename.</span>
+      <button id="kill-btn" class="danger" title="Kill the active tmux window">Delete</button>
+    </div>
+    <div id="term-wrap" style="display:none"><canvas id="term"></canvas></div>
+    <div id="input-bar">
+      <div class="key-row">
+        <button class="key-btn" data-key="Up"     title="Up arrow"      disabled>↑</button>
+        <button class="key-btn" data-key="Down"   title="Down arrow"    disabled>↓</button>
+        <button class="key-btn" data-key="Escape" title="Esc"           disabled>Esc</button>
+        <button class="key-btn" data-key="Tab"    title="Tab"           disabled>Tab</button>
+        <button class="key-btn" data-key="BTab"   title="Shift+Tab"     disabled>⇧Tab</button>
+        <button class="key-btn" data-key="BSpace" title="Backspace"     disabled>⌫</button>
+        <button class="key-btn" data-key="/"      title="Slash command" disabled>/</button>
+        <button class="key-btn" data-key="C-o"    title="Ctrl+O"        disabled>^O</button>
+        <button class="key-btn primary" data-key="Enter" title="Enter"  disabled>Enter</button>
+        <button id="send" class="key-btn danger" disabled>Send</button>
+      </div>
+      <div class="text-row">
+        <textarea id="input" rows="4" placeholder="Select a pane, then type a message…" disabled></textarea>
+      </div>
+    </div>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>
