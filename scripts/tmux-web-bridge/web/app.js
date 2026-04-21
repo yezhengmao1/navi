@@ -215,7 +215,6 @@ function setUiZoom(z) {
 }
 
 function fitPane() {
-  if (!activeKey) return;
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   // Subtract the wrap padding (6px each side, from CSS) and round down so we
   // never overshoot the viewport; tmux would just clip back.
@@ -225,7 +224,11 @@ function fitPane() {
   if (cellW <= 0 || cellH <= 0) return;
   const cols = Math.max(20, Math.floor(availW / cellW));
   const rows = Math.max(5,  Math.floor(availH / cellH));
-  ws.send(JSON.stringify({ type: "resize", key: activeKey, cols, rows }));
+  // Resize every known pane, not just the active one, so a user with several
+  // Claude sessions doesn't have to click through each to fit it.
+  for (const p of panes) {
+    ws.send(JSON.stringify({ type: "resize", key: p.key, cols, rows }));
+  }
 }
 fitBtn.onclick = fitPane;
 
@@ -1159,6 +1162,23 @@ window.addEventListener("resize", () => {
     dpr = newDpr;
     if (lastGrid) drawGrid(lastGrid, true);
   }
+});
+
+// The row-diff cache skips repaints when fingerprints match. If the on-canvas
+// pixels drift from that cached state (DPR flips, browser zoom, tab discard/
+// restore, GPU context loss, background throttling dropping a paint), the
+// stale patch sticks around until the next row change — and when the pane is
+// idle the agent won't send another snapshot because `data == last`. A cheap
+// full redraw every couple of seconds heals that back to the last snapshot
+// we do have cached.
+setInterval(() => {
+  if (!lastGrid) return;
+  if (document.hidden) return;
+  drawGrid(lastGrid, /*keepScroll=*/true);
+}, 2000);
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && lastGrid) drawGrid(lastGrid, /*keepScroll=*/true);
 });
 
 // ── New-session modal ───────────────────────────────────────

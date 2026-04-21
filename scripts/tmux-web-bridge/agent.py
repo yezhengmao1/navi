@@ -539,8 +539,10 @@ class Agent:
             return
 
     async def _poll(self, pane_id: str) -> None:
+        HEARTBEAT_PERIOD = 3.0
         last: bytes | None = None
         last_state: tuple[int, int, int, bool] | None = None
+        last_sent_at: float = 0.0
         first = True
         empty_streak = 0
         try:
@@ -560,10 +562,19 @@ class Agent:
                     continue
                 empty_streak = 0
                 state = (cols, rows, sp, in_mode)
-                if first or data != last or state != last_state:
+                now = asyncio.get_event_loop().time()
+                changed = first or data != last or state != last_state
+                # Heartbeat resend: even when nothing changed, ship the same
+                # frame every HEARTBEAT_PERIOD so a browser that missed an
+                # earlier snapshot (reconnect, dropped WS frame, DPR flip that
+                # happened between paints) has a chance to catch up without
+                # waiting for the user to actually change the pane.
+                stale = (now - last_sent_at) >= HEARTBEAT_PERIOD
+                if changed or stale:
                     first = False
                     last = data
                     last_state = state
+                    last_sent_at = now
                     payload = {
                         "type": "snapshot",
                         "pane": pane_id,
