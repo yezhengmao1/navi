@@ -245,7 +245,15 @@ termWrap.addEventListener("wheel", (e) => {
   // Relay the wheel to tmux copy-mode so the pane's visible window slides
   // over its own scrollback. The next capture-pane poll redraws us.
   e.preventDefault();
-  sendScroll(e.deltaY < 0 ? "up" : "down");
+  if (e.deltaY > 0 && lastGrid && lastGrid.in_copy_mode && (lastGrid.scroll_position || 0) <= 0) {
+    sendScroll("exit");
+    return;
+  }
+  // Only Shift-wheel triggers page scroll; plain wheel stays line-by-line so
+  // trackpad inertia or a hard flick can't accidentally jump multiple pages.
+  const up = e.deltaY < 0;
+  const fast = e.shiftKey;
+  sendScroll(fast ? (up ? "page_up" : "page_down") : (up ? "up" : "down"));
 }, { passive: false });
 
 // ── Pane name overrides ─────────────────────────────────────
@@ -535,6 +543,82 @@ async function copyToClipboard(text) {
 }
 
 let toastTimer = null;
+const TOAST_POS_KEY = "tmux-bridge.toast-pos";
+
+function _applyToastPos(t) {
+  let pos = null;
+  try { pos = JSON.parse(localStorage.getItem(TOAST_POS_KEY) || "null"); } catch {}
+  if (pos && typeof pos.left === "number" && typeof pos.top === "number") {
+    // Clamp into the viewport so a prior-session drag off-screen is recoverable.
+    const pad = 4;
+    const maxLeft = Math.max(pad, window.innerWidth  - (t.offsetWidth  || 80) - pad);
+    const maxTop  = Math.max(pad, window.innerHeight - (t.offsetHeight || 32) - pad);
+    t.style.left = Math.min(maxLeft, Math.max(pad, pos.left)) + "px";
+    t.style.top  = Math.min(maxTop,  Math.max(pad, pos.top))  + "px";
+    t.style.right = "auto";
+    t.style.bottom = "auto";
+  } else {
+    t.style.left = ""; t.style.top = "";
+    t.style.right = ""; t.style.bottom = "";
+  }
+}
+
+function _installToastDrag(t) {
+  if (t.dataset.dragInstalled === "1") return;
+  t.dataset.dragInstalled = "1";
+  t.style.cursor = "move";
+  // Keep pointer events on so drags work (CSS sets pointer-events:none
+  // by default to let clicks pass through — we override here).
+  t.style.pointerEvents = "auto";
+  t.title = "Drag to reposition";
+
+  let dragging = false;
+  let startX = 0, startY = 0, startLeft = 0, startTop = 0;
+
+  t.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    dragging = true;
+    // Suspend auto-hide while the user interacts.
+    clearTimeout(toastTimer);
+    t.classList.add("visible");
+    const rect = t.getBoundingClientRect();
+    startX = e.clientX; startY = e.clientY;
+    startLeft = rect.left; startTop = rect.top;
+    t.style.left = startLeft + "px";
+    t.style.top  = startTop + "px";
+    t.style.right = "auto";
+    t.style.bottom = "auto";
+    t.style.transition = "none";
+    e.preventDefault();
+  });
+  window.addEventListener("mousemove", (e) => {
+    if (!dragging) return;
+    const pad = 4;
+    const w = t.offsetWidth, h = t.offsetHeight;
+    const left = Math.min(window.innerWidth  - w - pad, Math.max(pad, startLeft + (e.clientX - startX)));
+    const top  = Math.min(window.innerHeight - h - pad, Math.max(pad, startTop  + (e.clientY - startY)));
+    t.style.left = left + "px";
+    t.style.top  = top  + "px";
+  });
+  window.addEventListener("mouseup", () => {
+    if (!dragging) return;
+    dragging = false;
+    t.style.transition = "";
+    const left = parseFloat(t.style.left) || 0;
+    const top  = parseFloat(t.style.top)  || 0;
+    try { localStorage.setItem(TOAST_POS_KEY, JSON.stringify({ left, top })); } catch {}
+    // Resume the auto-hide countdown after a drag.
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove("visible"), 1400);
+  });
+
+  // Double-click to reset to default corner.
+  t.addEventListener("dblclick", () => {
+    try { localStorage.removeItem(TOAST_POS_KEY); } catch {}
+    _applyToastPos(t);
+  });
+}
+
 function showToast(msg) {
   let t = document.getElementById("toast");
   if (!t) {
@@ -543,6 +627,8 @@ function showToast(msg) {
     document.body.appendChild(t);
   }
   t.textContent = msg;
+  _installToastDrag(t);
+  _applyToastPos(t);
   t.classList.add("visible");
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.remove("visible"), 1400);
@@ -588,6 +674,25 @@ if (exitScrollBtn) {
   exitScrollBtn.addEventListener("click", () => {
     sendScroll("exit");
     if (!inputEl.disabled) inputEl.focus();
+  });
+}
+
+const pageUpBtn = document.getElementById("page-up-btn");
+const pageDownBtn = document.getElementById("page-down-btn");
+if (pageUpBtn) {
+  pageUpBtn.addEventListener("click", () => {
+    if (!activeKey) return;
+    sendScroll("page_up");
+  });
+}
+if (pageDownBtn) {
+  pageDownBtn.addEventListener("click", () => {
+    if (!activeKey) return;
+    if (lastGrid && lastGrid.in_copy_mode && (lastGrid.scroll_position || 0) <= 0) {
+      sendScroll("exit");
+    } else {
+      sendScroll("page_down");
+    }
   });
 }
 
@@ -760,25 +865,75 @@ function renderPanes() {
   updatePendingNotice();
 }
 
-// ── Pending-approval notice (sidebar bell + tab-title blink) ────────────
+// ── Pending-approval notice (sidebar bell + tab-title blink + OS toast) ────
 const pendingBell = document.getElementById("pending-bell");
 const pendingCountEl = document.getElementById("pending-count");
 const ORIG_TITLE = document.title;
 let lastPendingCount = 0;
+let lastPendingKeys = new Set();
 let titleBlinkTimer = null;
 let titleState = false;
+let liveOsNotification = null;
+
+// Ask once on the first user gesture — browsers refuse the prompt otherwise.
+function _primeNotifPermission() {
+  if (!("Notification" in window)) return;
+  if (Notification.permission === "default") {
+    try { Notification.requestPermission(); } catch {}
+  }
+  window.removeEventListener("pointerdown", _primeNotifPermission);
+  window.removeEventListener("keydown", _primeNotifPermission);
+}
+window.addEventListener("pointerdown", _primeNotifPermission, { once: false });
+window.addEventListener("keydown", _primeNotifPermission, { once: false });
+
+function _fireOsNotif(n, newlyPendingPane) {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  try { if (liveOsNotification) liveOsNotification.close(); } catch {}
+  const who = newlyPendingPane
+    ? `${newlyPendingPane.host || "local"} · ${displayName(newlyPendingPane)}`
+    : `${n} pane${n > 1 ? "s" : ""}`;
+  const body = newlyPendingPane?.detail || "Click to jump to the pane.";
+  const notif = new Notification(`Approval waiting — ${who}`, {
+    body,
+    tag: "tmux-bridge-pending",   // collapses repeats in the OS tray
+    renotify: true,
+    requireInteraction: false,
+  });
+  notif.onclick = () => {
+    window.focus();
+    const target = panes.find((p) => p.state === "pending");
+    if (target) selectPane(target.key);
+    notif.close();
+  };
+  liveOsNotification = notif;
+}
 
 function updatePendingNotice() {
-  const n = panes.reduce((a, p) => a + (p.state === "pending" ? 1 : 0), 0);
+  const pendingPanes = panes.filter((p) => p.state === "pending");
+  const n = pendingPanes.length;
+  const wasVisible = pendingBell.classList.contains("visible");
   if (n > 0) {
     pendingBell.classList.add("visible");
     pendingCountEl.textContent = String(n);
+    // offsetWidth/Height are 0 while display:none, so the initial _clamp
+    // couldn't see the real size. Re-clamp now that the bell is laid out.
+    if (!wasVisible) _clampBellToViewport();
   } else {
     pendingBell.classList.remove("visible");
   }
+  const curKeys = new Set(pendingPanes.map((p) => p.key));
+  const appeared = pendingPanes.find((p) => !lastPendingKeys.has(p.key));
+  if (appeared || (n > lastPendingCount)) _fireOsNotif(n, appeared || pendingPanes[0]);
+  lastPendingKeys = curKeys;
+
   if (n !== lastPendingCount) {
     lastPendingCount = n;
     if (n > 0) startTitleBlink(n); else stopTitleBlink();
+    if (n === 0 && liveOsNotification) {
+      try { liveOsNotification.close(); } catch {}
+      liveOsNotification = null;
+    }
   } else if (n > 0) {
     // Keep the count current if it changed between blinks.
     updateBlinkLabel(n);
@@ -806,6 +961,89 @@ function stopTitleBlink() {
   titleBlinkTimer = null;
   document.title = ORIG_TITLE;
 }
+
+// ── Pending bell: draggable + click-to-jump ─────────────────────────
+const BELL_POS_KEY = "tmux-bridge.bell-pos";
+function _clampBellToViewport() {
+  // Assume an 80x32 minimum footprint before the element has been laid out;
+  // once .visible is applied the real offsetWidth/Height take over.
+  const pad = 4;
+  const w = pendingBell.offsetWidth  || 80;
+  const h = pendingBell.offsetHeight || 32;
+  const maxLeft = Math.max(pad, window.innerWidth  - w - pad);
+  const maxTop  = Math.max(pad, window.innerHeight - h - pad);
+  const curLeft = parseFloat(pendingBell.style.left);
+  const curTop  = parseFloat(pendingBell.style.top);
+  if (Number.isFinite(curLeft) && Number.isFinite(curTop)) {
+    const left = Math.min(maxLeft, Math.max(pad, curLeft));
+    const top  = Math.min(maxTop,  Math.max(pad, curTop));
+    if (left !== curLeft) pendingBell.style.left = left + "px";
+    if (top  !== curTop ) pendingBell.style.top  = top  + "px";
+  }
+}
+(function initBellDrag() {
+  const saved = localStorage.getItem(BELL_POS_KEY);
+  if (saved) {
+    try {
+      const { left, top } = JSON.parse(saved);
+      if (typeof left === "number" && typeof top === "number") {
+        pendingBell.style.left = left + "px";
+        pendingBell.style.top = top + "px";
+        pendingBell.style.right = "auto";
+      }
+    } catch {}
+  }
+  // Clamp on load and on resize so a saved position from a larger viewport
+  // can't leave the bell stranded outside the visible area.
+  _clampBellToViewport();
+  window.addEventListener("resize", _clampBellToViewport);
+  let dragging = false, moved = false;
+  let startX = 0, startY = 0, origLeft = 0, origTop = 0;
+  pendingBell.addEventListener("pointerdown", (e) => {
+    dragging = true; moved = false;
+    const r = pendingBell.getBoundingClientRect();
+    origLeft = r.left; origTop = r.top;
+    startX = e.clientX; startY = e.clientY;
+    pendingBell.setPointerCapture(e.pointerId);
+    pendingBell.classList.add("dragging");
+  });
+  pendingBell.addEventListener("pointermove", (e) => {
+    if (!dragging) return;
+    const dx = e.clientX - startX, dy = e.clientY - startY;
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) moved = true;
+    const w = pendingBell.offsetWidth, h = pendingBell.offsetHeight;
+    const left = Math.max(0, Math.min(window.innerWidth - w, origLeft + dx));
+    const top  = Math.max(0, Math.min(window.innerHeight - h, origTop + dy));
+    pendingBell.style.left = left + "px";
+    pendingBell.style.top = top + "px";
+    pendingBell.style.right = "auto";
+  });
+  pendingBell.addEventListener("pointerup", (e) => {
+    if (!dragging) return;
+    dragging = false;
+    pendingBell.classList.remove("dragging");
+    try { pendingBell.releasePointerCapture(e.pointerId); } catch {}
+    if (moved) {
+      const r = pendingBell.getBoundingClientRect();
+      localStorage.setItem(BELL_POS_KEY, JSON.stringify({ left: r.left, top: r.top }));
+    }
+  });
+  pendingBell.addEventListener("click", (e) => {
+    if (moved) { e.preventDefault(); e.stopPropagation(); return; }
+    const target = panes.find((p) => p.state === "pending");
+    if (target) selectPane(target.key);
+  });
+  // Double-click resets the bell to its default top-right corner so a user
+  // can always recover from dragging it off-screen.
+  pendingBell.addEventListener("dblclick", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    localStorage.removeItem(BELL_POS_KEY);
+    pendingBell.style.left = "";
+    pendingBell.style.top = "";
+    pendingBell.style.right = "";
+  });
+})();
 
 function selectPane(key) {
   if (key === activeKey) return;
@@ -884,7 +1122,12 @@ inputEl.addEventListener("keydown", (e) => {
     return;
   }
   if (e.key === "PageUp")   { e.preventDefault(); sendScroll("page_up"); return; }
-  if (e.key === "PageDown") { e.preventDefault(); sendScroll("page_down"); return; }
+  if (e.key === "PageDown") {
+    e.preventDefault();
+    if (lastGrid && lastGrid.in_copy_mode && (lastGrid.scroll_position || 0) <= 0) sendScroll("exit");
+    else sendScroll("page_down");
+    return;
+  }
   // When the pane is showing scrollback, Esc exits copy-mode instead of
   // whatever the default would do (nothing, in a textarea).
   if (e.key === "Escape" && lastGrid && lastGrid.in_copy_mode) {
@@ -898,7 +1141,12 @@ document.addEventListener("keydown", (e) => {
   if (modalBack.classList.contains("open")) return;
   if (e.target === inputEl) return;
   if (e.shiftKey && e.key === "PageUp")   { e.preventDefault(); sendScroll("page_up"); return; }
-  if (e.shiftKey && e.key === "PageDown") { e.preventDefault(); sendScroll("page_down"); return; }
+  if (e.shiftKey && e.key === "PageDown") {
+    e.preventDefault();
+    if (lastGrid && lastGrid.in_copy_mode && (lastGrid.scroll_position || 0) <= 0) sendScroll("exit");
+    else sendScroll("page_down");
+    return;
+  }
   if (e.key === "Escape" && lastGrid && lastGrid.in_copy_mode) {
     e.preventDefault();
     sendScroll("exit");
