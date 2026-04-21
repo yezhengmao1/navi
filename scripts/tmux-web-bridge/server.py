@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import hmac
 import json
 import logging
 import os
@@ -459,6 +460,15 @@ class Hub:
             log.info("browser disconnected")
 
 
+def _url_token_ok(request: web.Request, expected: str) -> bool:
+    """True when the request's ?token= query param matches the shared token.
+    An empty `expected` disables the gate (same as pre-auth behavior)."""
+    if not expected:
+        return True
+    got = request.query.get("token", "")
+    return bool(got) and hmac.compare_digest(got, expected)
+
+
 def make_app(hub: Hub) -> web.Application:
     app = web.Application()
 
@@ -474,11 +484,35 @@ def make_app(hub: Hub) -> web.Application:
         await hub.handle_browser(ws)
         return ws
 
-    async def index(request: web.Request) -> web.FileResponse:
-        return web.FileResponse(
-            WEB_DIR / "index.html",
+    async def index(request: web.Request) -> web.Response:
+        html_text = (WEB_DIR / "index.html").read_text(encoding="utf-8")
+        # Forward the URL token to /app.js so the auth middleware lets it
+        # through. The token is already in the user's URL bar — no extra
+        # exposure — but it means the <script src> has to carry the qs.
+        tok = request.query.get("token", "")
+        if tok:
+            qs = "?token=" + tok
+            html_text = html_text.replace('src="/app.js"', f'src="/app.js{qs}"')
+        return web.Response(
+            text=html_text,
+            content_type="text/html",
             headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
         )
+
+    async def appjs(request: web.Request) -> web.FileResponse:
+        return web.FileResponse(
+            WEB_DIR / "app.js",
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
+
+    @web.middleware
+    async def auth_mw(request: web.Request, handler):
+        # Agent endpoint uses its own token handshake, not the URL token.
+        if request.path == "/agent" or not hub.token:
+            return await handler(request)
+        if _url_token_ok(request, hub.token):
+            return await handler(request)
+        return web.Response(status=401, text="unauthorized: append ?token=... to the URL")
 
     @web.middleware
     async def no_cache(request: web.Request, handler):
@@ -487,12 +521,7 @@ def make_app(hub: Hub) -> web.Application:
             resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         return resp
 
-    async def appjs(request: web.Request) -> web.FileResponse:
-        return web.FileResponse(
-            WEB_DIR / "app.js",
-            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
-        )
-
+    app.middlewares.append(auth_mw)
     app.middlewares.append(no_cache)
     app.router.add_get("/", index)
     app.router.add_get("/app.js", appjs)
