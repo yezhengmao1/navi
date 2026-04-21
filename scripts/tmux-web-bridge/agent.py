@@ -183,8 +183,15 @@ async def capture_pane(pane_id: str, height: int, scroll_pos: int) -> bytes:
 
 
 async def send_keys(pane_id: str, text: str, enter: bool = True) -> None:
+    # `tmux send-keys -l <text>` is an execve with `text` as a single argv
+    # entry. Linux caps individual argv strings at roughly ARG_MAX (~128KB)
+    # and the exec fails with E2BIG long before we'd otherwise care, which
+    # made large pastes look like "Send did nothing". Chunk so any input
+    # the WS delivered us actually lands in the pane.
     if text:
-        await tmux("send-keys", "-t", pane_id, "-l", text)
+        CHUNK = 4096
+        for i in range(0, len(text), CHUNK):
+            await tmux("send-keys", "-t", pane_id, "-l", text[i:i + CHUNK])
     if enter:
         await tmux("send-keys", "-t", pane_id, "Enter")
 
