@@ -479,7 +479,10 @@ def make_app(hub: Hub) -> web.Application:
         return ws
 
     async def browser_handler(request: web.Request) -> web.WebSocketResponse:
-        ws = web.WebSocketResponse(heartbeat=30)
+        # Match the agent endpoint's max_msg_size so a big paste in the
+        # input bar doesn't trip aiohttp's 4 MB default and silently tear
+        # the WS down (user sees "Send did nothing").
+        ws = web.WebSocketResponse(heartbeat=30, max_msg_size=16 * 1024 * 1024)
         await ws.prepare(request)
         await hub.handle_browser(ws)
         return ws
