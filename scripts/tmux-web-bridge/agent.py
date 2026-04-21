@@ -55,16 +55,6 @@ def _read_status_overlay() -> dict[str, dict]:
     """Map of pane_id -> claude-status fields, for panes that wrote a hook file."""
     if not STATUS_DIR.exists():
         return {}
-    # Claude Code's default-mode permission dialog fires no hook on user
-    # rejection — `PermissionDenied` only runs in auto mode. If the user
-    # clicks Deny, the status file stays "pending" until Claude itself
-    # fires another event (next PreToolUse / UserPromptSubmit / Stop).
-    # When Claude is silent after a Deny (no follow-up tool, no text
-    # response) pending sticks indefinitely. 30 s without a status
-    # refresh is our cue to demote pending to idle so the sidebar /
-    # floating bell / OS notification stop insisting.
-    PENDING_MAX_AGE = 30.0
-    now = time.time()
     overlay: dict[str, dict] = {}
     live_keys: set[str] = set()
     for f in STATUS_DIR.iterdir():
@@ -95,15 +85,10 @@ def _read_status_overlay() -> dict[str, dict]:
         pane = d.get("pane") or ""
         if not pane:
             continue
-        state = d.get("state", "")
-        detail = d.get("detail", "")
-        if state == "pending" and (now - mtime) > PENDING_MAX_AGE:
-            state = "idle"
-            detail = "pending dismissed"
         overlay[pane] = {
             "session_id": f.name,
-            "state": state,
-            "detail": detail,
+            "state": d.get("state", ""),
+            "detail": d.get("detail", ""),
             "timestamp": d.get("timestamp", ""),
         }
     # Drop cache entries for files that have gone away.
@@ -111,6 +96,32 @@ def _read_status_overlay() -> dict[str, dict]:
         if stale not in live_keys:
             _OVERLAY_CACHE.pop(stale, None)
     return overlay
+
+
+# Recognisable fragments of Claude Code's permission dialog. Any one of
+# these sitting in the pane means the approval UI is still up; if none
+# are there, the user has already dismissed it (clicked Approve/Deny,
+# pressed Esc, or the request otherwise resolved) even though no hook
+# fired to update the status file.
+_PENDING_DIALOG_MARKERS = (
+    "Do you want to proceed",
+    "Do you want to make this edit",
+    "Do you want Claude",
+    "tell Claude what to do",
+    "and don't ask again",
+    "Yes, and don",
+)
+
+
+async def _approval_dialog_visible(pane_id: str) -> bool:
+    code, out, _ = await tmux("capture-pane", "-p", "-t", pane_id)
+    if code != 0:
+        # If we can't capture the pane right now, err on the side of
+        # trusting the hook — better a briefly-lingering pending than
+        # dropping a real one.
+        return True
+    text = out.decode(errors="replace")
+    return any(m in text for m in _PENDING_DIALOG_MARKERS)
 
 
 async def list_all_panes() -> tuple[dict[str, dict], set[str]]:
@@ -132,6 +143,12 @@ async def list_all_panes() -> tuple[dict[str, dict], set[str]]:
     overlay = _read_status_overlay()
     result: dict[str, dict] = {}
     all_pids: set[str] = set()
+    # Collect panes whose overlay claims "pending" so we can confirm the
+    # approval dialog is actually still up. Claude Code's default-mode
+    # dialog fires no hook on user-rejection (or Esc), so without this
+    # check a dismissed dialog stays pending until Claude happens to
+    # trigger another event — which may be a long silence away.
+    pending_checks: list[tuple[str, asyncio.Task[bool]]] = []
     for line in out.decode(errors="replace").splitlines():
         parts = line.split("\t")
         if len(parts) < 6:
@@ -139,10 +156,9 @@ async def list_all_panes() -> tuple[dict[str, dict], set[str]]:
         pid, sess, widx, wname, cwd, cmd = parts[:6]
         all_pids.add(pid)
         ov = overlay.get(pid)
-        # Only surface claude panes — those with a matching status-hook file.
         if ov is None:
             continue
-        result[pid] = {
+        entry = {
             "pane": pid,
             "session_id": ov["session_id"],
             "cwd": cwd,
@@ -153,6 +169,19 @@ async def list_all_panes() -> tuple[dict[str, dict], set[str]]:
             "window_index": widx,
             "window_name": wname,
         }
+        result[pid] = entry
+        if ov["state"] == "pending":
+            pending_checks.append(
+                (pid, asyncio.create_task(_approval_dialog_visible(pid))),
+            )
+    for pid, task in pending_checks:
+        try:
+            visible = await task
+        except Exception:
+            visible = True
+        if not visible and pid in result:
+            result[pid]["state"] = "idle"
+            result[pid]["detail"] = "dialog dismissed"
     return result, all_pids
 
 
