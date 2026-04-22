@@ -31,6 +31,7 @@ const uiZoomVal   = document.getElementById("ui-zoom-val");
 const fitBtn      = document.getElementById("fit-btn");
 const copyBtn     = document.getElementById("copy-btn");
 const exitScrollBtn = document.getElementById("exit-scroll-btn");
+const clearInputBtn = document.getElementById("clear-input-btn");
 
 const BASE_FONT_SIZE = 20;
 const MIN_ZOOM = 0.3;
@@ -1206,6 +1207,7 @@ function updateActiveUI() {
   keyBtns.forEach((b) => { b.disabled = !active; });
   fitBtn.disabled = !active;
   if (killBtn) killBtn.disabled = !active;
+  if (clearInputBtn) clearInputBtn.disabled = !active;
   // Auto-focus on desktop is convenient; on mobile it pops the virtual
   // keyboard the instant you pick a pane, burying the terminal. Let the
   // user tap the textarea when they actually want to type.
@@ -1222,6 +1224,12 @@ function killActivePane() {
 }
 
 if (killBtn) killBtn.addEventListener("click", killActivePane);
+
+if (clearInputBtn) clearInputBtn.addEventListener("click", (e) => {
+  e.preventDefault();
+  inputEl.value = "";
+  if (!inputEl.disabled) inputEl.focus();
+});
 
 function sendNamedKey(name) {
   if (!activeKey || !name) return;
