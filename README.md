@@ -114,6 +114,39 @@ Web UI，实时查看并接管任意主机上 tmux pane 里运行的 Claude Code
 - **agent** 在每台跑着 tmux 的机器上运行，主动把 Claude pane 推到 server
 - 浏览器按 host 分组查看所有 agent 的 pane，可直接输入、滚动、查看 scrollback
 
+```mermaid
+flowchart LR
+    subgraph HostA["tmux host A"]
+        A1[Claude pane]
+        A2[Claude pane]
+        AG1[agent.py]
+        A1 -.capture.-> AG1
+        A2 -.capture.-> AG1
+    end
+
+    subgraph HostB["tmux host B"]
+        B1[Claude pane]
+        AGB[agent.py]
+        B1 -.capture.-> AGB
+    end
+
+    subgraph Server["server host"]
+        S[server.py<br/>WS relay + HTTP]
+    end
+
+    Browser["Browser<br/>xterm.js"]
+
+    AG1 -- "WS /agent (outbound)" --> S
+    AGB -- "WS /agent (outbound)" --> S
+    Browser -- "WS /ws + HTTP" --> S
+    S -- "send_keys / subscribe" --> AG1
+    S -- "send_keys / subscribe" --> AGB
+```
+
+- agent 只发起出站连接，tmux 所在主机无需开放任何入站端口
+- snapshot 服务端去重，空闲 pane 不产生流量
+- 同一 `--token` 同时守护 agent↔server 握手 和 浏览器访问
+
 ```bash
 cd scripts/tmux-web-bridge
 pip install -r requirements.txt
