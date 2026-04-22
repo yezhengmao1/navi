@@ -1262,14 +1262,20 @@ function autoGrow() {
 
 sendBtn.addEventListener("click", sendInput);
 inputEl.addEventListener("input", autoGrow);
+// Desktop keydown and soft-keyboard beforeinput can both produce an Enter
+// line-break event. Shift+Enter on desktop must insert a newline — but the
+// beforeinput handler below eats every insertLineBreak and calls sendInput,
+// which used to clobber that. Timestamp the last Shift+Enter keydown and
+// let beforeinput bail out if it fires immediately after.
+let _shiftEnterAt = 0;
 // Android / GBoard / SwiftKey soft keyboards frequently skip firing a real
 // `keydown` for the Enter key and only emit a beforeinput with
 // `inputType === "insertLineBreak"`. Without this handler, tapping Enter
 // on mobile just inserts a newline into the textarea and never sends.
 inputEl.addEventListener("beforeinput", (e) => {
   if (e.inputType !== "insertLineBreak") return;
-  // Shift+Enter should still insert a newline on desktop; on soft keyboards
-  // there's no shift state here, so any line-break is treated as send.
+  // Desktop Shift+Enter: leave the native newline insertion alone.
+  if (performance.now() - _shiftEnterAt < 50) return;
   e.preventDefault();
   sendInput();
 });
@@ -1279,6 +1285,12 @@ inputEl.addEventListener("keydown", (e) => {
   // Swallowing it here would also eat the commit and leave the textarea
   // stuck with half-typed pinyin.
   if (e.isComposing || e.keyCode === 229) return;
+  if (e.key === "Enter" && e.shiftKey) {
+    // Signal the beforeinput handler to skip its send-on-line-break path
+    // for this specific keystroke; the browser inserts the newline itself.
+    _shiftEnterAt = performance.now();
+    return;
+  }
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
     sendInput();

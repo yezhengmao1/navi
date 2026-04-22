@@ -148,22 +148,34 @@
       0%, 100% { background: transparent; }
       50%      { background: rgba(234, 88, 12, 0.08); }
     }
+    /* Bell stays pinned to the viewport at all times so it's always
+       draggable / reachable. Idle look: muted greys, no animation, count
+       hidden. The .visible class (applied when at least one pane is
+       pending) lights it up with the accent colour + pulse animation. */
     #pending-bell {
-      display: none; position: fixed; z-index: 9999;
+      display: inline-flex; position: fixed; z-index: 9999;
       top: 20px; right: 20px;
       width: 56px; height: 56px;
       border-radius: 50%;
       align-items: center; justify-content: center;
-      background: var(--bg-elev); color: var(--accent);
-      border: 2px solid var(--accent);
-      box-shadow: 0 4px 16px rgba(0,0,0,0.22);
+      background: var(--bg-elev); color: var(--text-dim);
+      border: 2px solid var(--border-strong);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+      opacity: 0.55;
       cursor: grab; user-select: none;
       /* Without this, mobile browsers intercept the drag as a page pan and
          our pointermove never fires. */
       touch-action: none;
+      transition: opacity 180ms, background-color 180ms, color 180ms, border-color 180ms, box-shadow 180ms;
+    }
+    #pending-bell:hover { opacity: 0.85; }
+    #pending-bell.visible {
+      opacity: 1;
+      color: var(--accent);
+      border-color: var(--accent);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.22);
       animation: pending-row 2.4s ease-in-out infinite;
     }
-    #pending-bell.visible { display: inline-flex; }
     #pending-bell.dragging {
       cursor: grabbing;
       animation: none;
@@ -184,9 +196,11 @@
       background: var(--accent); color: #fff;
       border: 2px solid var(--bg-elev);
       font-size: 11px; font-weight: 700; line-height: 1;
-      display: inline-flex; align-items: center; justify-content: center;
+      display: none; align-items: center; justify-content: center;
       pointer-events: none;
     }
+    /* Only show the count badge when there's actually something pending. */
+    #pending-bell.visible #pending-count { display: inline-flex; }
     .pane-meta { font-size: 11px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .pane-path {
       font-size: 11px; color: var(--text-dim); margin-top: 2px;
