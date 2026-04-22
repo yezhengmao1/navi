@@ -79,11 +79,17 @@ mcp/
     ├── index.js                 # 思源笔记 MCP Server
     └── package.json             # 依赖声明
 scripts/
-└── tmux-claude-status/
-    ├── install.sh               # 安装/卸载
-    ├── status-hook.sh           # hook 脚本
-    ├── claude-status.sh         # 弹窗显示脚本
-    └── statusline.sh            # 状态栏组件
+├── tmux-claude-status/
+│   ├── install.sh               # 安装/卸载
+│   ├── status-hook.sh           # hook 脚本
+│   ├── claude-status.sh         # 弹窗显示脚本
+│   └── statusline.sh            # 状态栏组件
+└── tmux-web-bridge/
+    ├── server.py                # Web UI + WS 中继
+    ├── agent.py                 # tmux 主机端 agent
+    ├── web/                     # 前端（xterm.js）
+    ├── Dockerfile               # 服务端镜像
+    └── docker-compose.yml       # 一键部署
 ```
 
 ## tmux-claude-status
@@ -99,6 +105,30 @@ bash scripts/tmux-claude-status/install.sh
 # 卸载
 bash scripts/tmux-claude-status/install.sh --uninstall
 ```
+
+## tmux-web-bridge
+
+Web UI，实时查看并接管任意主机上 tmux pane 里运行的 Claude Code 实例——包括远程机器。
+
+- **server** 在一台机器上托管 Web UI
+- **agent** 在每台跑着 tmux 的机器上运行，主动把 Claude pane 推到 server
+- 浏览器按 host 分组查看所有 agent 的 pane，可直接输入、滚动、查看 scrollback
+
+```bash
+cd scripts/tmux-web-bridge
+pip install -r requirements.txt
+
+# server
+export BRIDGE_TOKEN=$(openssl rand -hex 16)
+python server.py --token "$BRIDGE_TOKEN"
+
+# agent（每台 tmux 机器）
+python agent.py --server ws://<server-host>:8787/agent --token "$BRIDGE_TOKEN"
+```
+
+也可通过 `docker compose up -d` 部署 server。详见 [scripts/tmux-web-bridge/README.md](scripts/tmux-web-bridge/README.md)。
+
+> 安全提示：连到 server 的浏览器等同于对每个 Claude pane 拥有远程 shell 权限，请通过 VPN / 反向代理 / SSH 隧道保护端口，并始终配置 `--token`。
 
 ## License
 
