@@ -1,0 +1,10 @@
+services:
+  server:
+    build: .
+    image: tmux-web-bridge:latest
+    container_name: tmux-web-bridge
+    restart: unless-stopped
+    ports:
+      - "${BRIDGE_PORT:-8787}:8787"
+    environment:
+      BRIDGE_TOKEN: "${BRIDGE_TOKEN:?set BRIDGE_TOKEN in .env or the shell}"

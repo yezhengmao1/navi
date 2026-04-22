@@ -84,6 +84,18 @@ Flags:
 -v          verbose logs
 ```
 
+## Run — server via docker-compose
+
+```bash
+cd scripts/tmux-web-bridge
+echo "BRIDGE_TOKEN=$(openssl rand -hex 16)" > .env   # share this with agents
+docker compose up -d
+```
+
+Override the host port with `BRIDGE_PORT=9000 docker compose up -d`.
+Agents still run on the host (they need local tmux) — point them at
+`ws://<server-host>:8787/agent` as above.
+
 ## All-in-one (same machine)
 
 Run both in two terminals — no difference from the distributed case:

@@ -7,3 +7,4 @@ venv
 agent.py
 README.md
 start.sh
+docker-compose.yml
