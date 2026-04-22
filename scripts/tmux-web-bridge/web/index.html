@@ -4,6 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>tmux-web-bridge</title>
+  <!-- Data-URI favicon: keeps the navi logo visible in the tab without
+       adding a new route the auth middleware would have to punch through. -->
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'><defs><radialGradient id='c' cx='42%25' cy='38%25' r='55%25'><stop offset='0%25' stop-color='%23ffffff'/><stop offset='35%25' stop-color='%23d8f2ff'/><stop offset='70%25' stop-color='%237ecef4'/><stop offset='100%25' stop-color='%233a9fd8'/></radialGradient></defs><path d='M82 90 Q58 50 18 22 Q10 28 14 42 Q20 62 38 80 Q56 94 82 98Z' fill='%23a8e6ff'/><path d='M118 90 Q142 50 182 22 Q190 28 186 42 Q180 62 162 80 Q144 94 118 98Z' fill='%23a8e6ff'/><path d='M82 110 Q56 126 24 162 Q20 170 30 164 Q50 146 68 128 Q80 114 83 110Z' fill='%23a8e6ff'/><path d='M118 110 Q144 126 176 162 Q180 170 170 164 Q150 146 132 128 Q120 114 117 110Z' fill='%23a8e6ff'/><circle cx='100' cy='100' r='22' fill='url(%23c)'/></svg>">
   <style>
     :root {
       color-scheme: light;
@@ -37,14 +40,29 @@
     }
     #sidebar header h1 { font-size: 13px; font-weight: 600; margin: 0; color: var(--text-dim); letter-spacing: 0.04em; text-transform: uppercase; }
     #sidebar header .head-right { display: flex; gap: 8px; align-items: center; }
-    #new-pane-btn {
-      background: var(--accent); color: #fff; border: none; border-radius: 5px;
-      padding: 3px 10px; font-size: 11px; font-weight: 600; cursor: pointer;
-      letter-spacing: 0.03em;
-    }
-    #new-pane-btn:hover { background: #a33c0d; }
-    #new-pane-btn:disabled { background: #cbd0dc; cursor: not-allowed; }
     #conn { font-size: 11px; color: var(--text-dim); }
+    /* Brand mark in the sidebar header — the navi crystal-wings svg.
+       Sized to sit flush with the "Claude Panes" title. */
+    #sidebar header .logo {
+      width: 26px; height: 26px; flex: 0 0 auto;
+      filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.08));
+    }
+    #sidebar header .head-left {
+      display: flex; align-items: center; gap: 8px; min-width: 0;
+    }
+    /* Toolbar-scoped styling for the re-homed NEW / DELETE buttons. */
+    #toolbar #new-pane-btn {
+      background: var(--accent); color: #fff; border-color: var(--accent);
+      font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+    }
+    #toolbar #new-pane-btn:hover { background: #a33c0d; border-color: #a33c0d; }
+    #toolbar #new-pane-btn:disabled { background: #cbd0dc; color: #eef0f5; border-color: #cbd0dc; cursor: not-allowed; }
+    #toolbar #kill-btn {
+      background: var(--bg); color: var(--accent); border-color: var(--accent);
+      font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+    }
+    #toolbar #kill-btn:hover { background: var(--accent); color: #fff; }
+    #toolbar #kill-btn:disabled { background: #f1f2f5; color: #aaa; border-color: var(--border); cursor: not-allowed; }
     #modal-backdrop {
       position: fixed; inset: 0; background: rgba(20, 24, 35, 0.35);
       display: none; align-items: center; justify-content: center; z-index: 100;
@@ -194,11 +212,6 @@
       padding: 3px 9px; font-size: 12px; cursor: pointer;
     }
     #toolbar button:hover { background: #f0e2c2; }
-    #toolbar button.danger {
-      background: var(--accent); color: #fff; border-color: var(--accent);
-      font-weight: 600;
-    }
-    #toolbar button.danger:hover { background: #a33c0d; border-color: #a33c0d; }
     .zoom-group { display: inline-flex; align-items: center; gap: 5px; }
     .zoom-label {
       font-size: 11px; font-weight: 600; color: var(--text-dim);
@@ -364,9 +377,66 @@
   <div id="sidebar-backdrop"></div>
   <aside id="sidebar">
     <header>
-      <h1>Claude Panes</h1>
+      <span class="head-left">
+        <svg class="logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" aria-label="navi">
+          <defs>
+            <radialGradient id="navi-glow-outer" cx="50%" cy="50%" r="50%">
+              <stop offset="0%"   stop-color="#a8e6ff" stop-opacity="0.5"/>
+              <stop offset="50%"  stop-color="#5bc0f7" stop-opacity="0.15"/>
+              <stop offset="100%" stop-color="#5bc0f7" stop-opacity="0"/>
+            </radialGradient>
+            <radialGradient id="navi-glow-inner" cx="50%" cy="50%" r="50%">
+              <stop offset="0%"   stop-color="#d4f0ff" stop-opacity="0.6"/>
+              <stop offset="70%"  stop-color="#7ecef4" stop-opacity="0.2"/>
+              <stop offset="100%" stop-color="#5bc0f7" stop-opacity="0"/>
+            </radialGradient>
+            <radialGradient id="navi-core" cx="42%" cy="38%" r="55%">
+              <stop offset="0%"   stop-color="#ffffff"/>
+              <stop offset="35%"  stop-color="#d8f2ff"/>
+              <stop offset="70%"  stop-color="#7ecef4"/>
+              <stop offset="100%" stop-color="#3a9fd8"/>
+            </radialGradient>
+            <linearGradient id="navi-wingL" x1="0%" y1="20%" x2="80%" y2="100%">
+              <stop offset="0%"   stop-color="#e8f8ff" stop-opacity="0.95"/>
+              <stop offset="50%"  stop-color="#a8e6ff" stop-opacity="0.75"/>
+              <stop offset="100%" stop-color="#5bc0f7" stop-opacity="0.4"/>
+            </linearGradient>
+            <linearGradient id="navi-wingR" x1="100%" y1="20%" x2="20%" y2="100%">
+              <stop offset="0%"   stop-color="#e8f8ff" stop-opacity="0.95"/>
+              <stop offset="50%"  stop-color="#a8e6ff" stop-opacity="0.75"/>
+              <stop offset="100%" stop-color="#5bc0f7" stop-opacity="0.4"/>
+            </linearGradient>
+            <filter id="navi-softglow"><feGaussianBlur stdDeviation="8"/></filter>
+            <filter id="navi-blur"><feGaussianBlur stdDeviation="3"/></filter>
+          </defs>
+          <circle cx="100" cy="100" r="95" fill="url(#navi-glow-outer)" filter="url(#navi-softglow)"/>
+          <circle cx="100" cy="100" r="65" fill="url(#navi-glow-inner)"/>
+          <path d="M82 90 Q58 50 18 22 Q10 28 14 42 Q20 62 38 80 Q56 94 82 98Z"
+                fill="url(#navi-wingL)" stroke="#80ccee" stroke-width="0.8"/>
+          <path d="M80 92 Q52 58 22 30" fill="none" stroke="#b0e4ff" stroke-width="0.5" opacity="0.6"/>
+          <path d="M78 94 Q56 72 36 58" fill="none" stroke="#b0e4ff" stroke-width="0.4" opacity="0.4"/>
+          <path d="M76 96 Q60 82 48 74" fill="none" stroke="#b0e4ff" stroke-width="0.3" opacity="0.3"/>
+          <path d="M82 110 Q56 126 24 162 Q20 170 30 164 Q50 146 68 128 Q80 114 83 110Z"
+                fill="url(#navi-wingL)" stroke="#80ccee" stroke-width="0.6" opacity="0.85"/>
+          <path d="M80 112 Q54 134 30 158" fill="none" stroke="#b0e4ff" stroke-width="0.4" opacity="0.4"/>
+          <path d="M78 114 Q58 132 44 146" fill="none" stroke="#b0e4ff" stroke-width="0.3" opacity="0.3"/>
+          <path d="M118 90 Q142 50 182 22 Q190 28 186 42 Q180 62 162 80 Q144 94 118 98Z"
+                fill="url(#navi-wingR)" stroke="#80ccee" stroke-width="0.8"/>
+          <path d="M120 92 Q148 58 178 30" fill="none" stroke="#b0e4ff" stroke-width="0.5" opacity="0.6"/>
+          <path d="M122 94 Q144 72 164 58" fill="none" stroke="#b0e4ff" stroke-width="0.4" opacity="0.4"/>
+          <path d="M124 96 Q140 82 152 74" fill="none" stroke="#b0e4ff" stroke-width="0.3" opacity="0.3"/>
+          <path d="M118 110 Q144 126 176 162 Q180 170 170 164 Q150 146 132 128 Q120 114 117 110Z"
+                fill="url(#navi-wingR)" stroke="#80ccee" stroke-width="0.6" opacity="0.85"/>
+          <path d="M120 112 Q146 134 170 158" fill="none" stroke="#b0e4ff" stroke-width="0.4" opacity="0.4"/>
+          <path d="M122 114 Q142 132 156 146" fill="none" stroke="#b0e4ff" stroke-width="0.3" opacity="0.3"/>
+          <circle cx="100" cy="100" r="20" fill="url(#navi-core)" filter="url(#navi-blur)"/>
+          <circle cx="100" cy="100" r="16" fill="url(#navi-core)"/>
+          <ellipse cx="93" cy="93" rx="6" ry="4.5" fill="#ffffff" opacity="0.85" transform="rotate(-20 93 93)"/>
+          <circle cx="104" cy="89" r="2.2" fill="#ffffff" opacity="0.55"/>
+        </svg>
+        <h1>Claude Panes</h1>
+      </span>
       <span class="head-right">
-        <button id="new-pane-btn" title="Launch a new claude session on a host">+ New</button>
         <span id="conn">connecting…</span>
       </span>
     </header>
@@ -404,7 +474,7 @@
         <button id="term-zoom-out" title="Terminal smaller">−</button>
         <span id="term-zoom-val">100%</span>
         <button id="term-zoom-in" title="Terminal bigger">+</button>
-        <button id="term-zoom-reset" title="Reset terminal zoom">Reset</button>
+        <button id="term-zoom-reset" title="Reset terminal zoom">RESET</button>
       </span>
       <span class="zoom-sep"></span>
       <span class="zoom-group">
@@ -412,17 +482,18 @@
         <button id="ui-zoom-out" title="UI smaller">−</button>
         <span id="ui-zoom-val">100%</span>
         <button id="ui-zoom-in" title="UI bigger">+</button>
-        <button id="ui-zoom-reset" title="Reset UI zoom">Reset</button>
+        <button id="ui-zoom-reset" title="Reset UI zoom">RESET</button>
       </span>
       <span class="zoom-sep"></span>
-      <button id="fit-btn" title="Resize tmux pane to match the browser viewport">Fit pane</button>
-      <button id="copy-btn" title="Copy selection (or whole screen if nothing is selected)">Copy</button>
-      <button id="page-up-btn"   title="Scroll up one page (PageUp / Shift+wheel)">PgUp</button>
-      <button id="page-down-btn" title="Scroll down one page (PageDown / Shift+wheel)">PgDn</button>
-      <button id="exit-scroll-btn" title="Leave tmux copy-mode and jump back to live" style="display:none">Exit scroll</button>
+      <button id="fit-btn" title="Resize tmux pane to match the browser viewport">FIT PANE</button>
+      <button id="copy-btn" title="Copy selection (or whole screen if nothing is selected)">COPY</button>
+      <button id="page-up-btn"   title="Scroll up one page (PageUp / Shift+wheel)">&uarr; PGUP</button>
+      <button id="page-down-btn" title="Scroll down one page (PageDown / Shift+wheel)">&darr; PGDN</button>
+      <button id="new-pane-btn" title="Launch a new claude session on a host">+ NEW</button>
+      <button id="kill-btn" title="Kill the active tmux window" disabled>DELETE</button>
+      <button id="exit-scroll-btn" title="Leave tmux copy-mode and jump back to live" style="display:none">EXIT SCROLL</button>
       <span style="flex:1"></span>
       <span class="hint" style="background:transparent;padding:0">Double-click a pane name to rename.</span>
-      <button id="kill-btn" class="danger" title="Kill the active tmux window">Delete</button>
     </div>
     <div id="term-wrap" style="display:none"><canvas id="term"></canvas></div>
     <div id="input-bar">
@@ -433,6 +504,7 @@
         <button class="key-btn" data-key="Tab"    title="Tab"           disabled>Tab</button>
         <button class="key-btn" data-key="BTab"   title="Shift+Tab"     disabled>⇧Tab</button>
         <button class="key-btn" data-key="BSpace" title="Backspace"     disabled>⌫</button>
+        <button class="key-btn" id="clear-input-btn" title="Clear textarea" disabled>CLEAR</button>
         <button class="key-btn" data-key="/"      title="Slash command" disabled>/</button>
         <button class="key-btn" data-key="C-o"    title="Ctrl+O"        disabled>^O</button>
         <button class="key-btn primary" data-key="Enter" title="Enter"  disabled>Enter</button>
