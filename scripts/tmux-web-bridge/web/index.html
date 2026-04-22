@@ -148,56 +148,64 @@
       0%, 100% { background: transparent; }
       50%      { background: rgba(234, 88, 12, 0.08); }
     }
-    /* Bell stays pinned to the viewport at all times so it's always
-       draggable / reachable. Idle look: muted greys, no animation, count
-       hidden. The .visible class (applied when at least one pane is
-       pending) lights it up with the accent colour + pulse animation. */
+    /* Floating navi logo. Pinned to the sidebar's top-left slot (left-side
+       default) with no border / background chrome — just the glyph. Idle
+       look: dimmed + desaturated. When a pane is pending, .visible swaps
+       in full colour + a gentle flash (soft orange glow + scale pulse). */
     #pending-bell {
       display: inline-flex; position: fixed; z-index: 9999;
-      top: 20px; right: 20px;
-      width: 56px; height: 56px;
-      border-radius: 50%;
+      top: 10px; left: 10px;
+      width: 48px; height: 48px;
       align-items: center; justify-content: center;
-      background: var(--bg-elev); color: var(--text-dim);
-      border: 2px solid var(--border-strong);
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+      background: transparent; border: none;
+      border-radius: 50%;
       opacity: 0.55;
       cursor: grab; user-select: none;
       /* Without this, mobile browsers intercept the drag as a page pan and
          our pointermove never fires. */
       touch-action: none;
-      transition: opacity 180ms, background-color 180ms, color 180ms, border-color 180ms, box-shadow 180ms;
+      transition: opacity 180ms, box-shadow 180ms;
     }
-    #pending-bell:hover { opacity: 0.85; }
+    #pending-bell:hover { opacity: 0.9; }
     #pending-bell.visible {
       opacity: 1;
-      color: var(--accent);
-      border-color: var(--accent);
-      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.22);
-      animation: pending-row 2.4s ease-in-out infinite;
+      animation: bell-flash 1.2s ease-in-out infinite;
     }
     #pending-bell.dragging {
       cursor: grabbing;
       animation: none;
       transition: none;
-      box-shadow: 0 8px 22px rgba(0,0,0,0.28);
     }
-    #pending-bell .bell-icon {
-      font-size: 24px; line-height: 1;
-      /* The glyph itself shouldn't eat pointer events — every mousedown
+    @keyframes bell-flash {
+      0%, 100% {
+        filter: drop-shadow(0 0 4px rgba(234, 88, 12, 0.45));
+        transform: scale(1);
+      }
+      50%      {
+        filter: drop-shadow(0 0 10px rgba(234, 88, 12, 0.9));
+        transform: scale(1.08);
+      }
+    }
+    #pending-bell .bell-logo {
+      width: 44px; height: 44px; display: block;
+      /* The SVG itself shouldn't eat pointer events — every mousedown
          should land on #pending-bell directly so the drag handler wins. */
       pointer-events: none;
+      filter: grayscale(0.55) brightness(0.95);
+      transition: filter 180ms;
     }
+    #pending-bell.visible .bell-logo { filter: none; }
     #pending-bell .dot { display: none; }
     #pending-count {
-      position: absolute; bottom: -4px; right: -4px;
-      min-width: 20px; height: 20px; padding: 0 5px;
+      position: absolute; bottom: -2px; right: -2px;
+      min-width: 18px; height: 18px; padding: 0 5px;
       box-sizing: border-box; border-radius: 999px;
       background: var(--accent); color: #fff;
-      border: 2px solid var(--bg-elev);
-      font-size: 11px; font-weight: 700; line-height: 1;
+      border: 2px solid var(--bg);
+      font-size: 10px; font-weight: 700; line-height: 1;
       display: none; align-items: center; justify-content: center;
       pointer-events: none;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
     }
     /* Only show the count badge when there's actually something pending. */
     #pending-bell.visible #pending-count { display: inline-flex; }
@@ -377,8 +385,9 @@
       }
       .key-btn.primary, .key-btn.danger { width: 72px; margin-left: 0; }
 
-      /* Pending bell sits just below the hamburger to avoid collision. */
-      #pending-bell { top: 12px; right: 12px; }
+      /* On mobile the hamburger owns the top-left corner, so nudge the
+         bell to its right to avoid overlapping. */
+      #pending-bell { top: 6px; left: 58px; }
     }
 
     /* Disable double-tap-to-zoom / pinch scroll on the terminal canvas
@@ -454,13 +463,62 @@
         <span id="conn">connecting…</span>
       </span>
     </header>
-    <div id="pending-bell" title="Approvals are waiting — drag to move, click to jump">
-      <span class="bell-icon">&#9873;</span>
-      <span class="dot"></span>
-      <span id="pending-count">0</span>
-    </div>
     <div id="panes-list"></div>
   </aside>
+  <!-- Floating navi logo — outside #sidebar on purpose. The mobile drawer
+       uses a CSS transform to slide itself off-screen, which would otherwise
+       create a containing block for position:fixed descendants and drag the
+       bell out of the viewport along with it. -->
+  <div id="pending-bell" title="Approvals are waiting — drag to move, click to jump">
+    <svg class="bell-logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" aria-label="navi">
+      <defs>
+        <radialGradient id="bell-glow-outer" cx="50%" cy="50%" r="50%">
+          <stop offset="0%"   stop-color="#a8e6ff" stop-opacity="0.5"/>
+          <stop offset="50%"  stop-color="#5bc0f7" stop-opacity="0.15"/>
+          <stop offset="100%" stop-color="#5bc0f7" stop-opacity="0"/>
+        </radialGradient>
+        <radialGradient id="bell-glow-inner" cx="50%" cy="50%" r="50%">
+          <stop offset="0%"   stop-color="#d4f0ff" stop-opacity="0.6"/>
+          <stop offset="70%"  stop-color="#7ecef4" stop-opacity="0.2"/>
+          <stop offset="100%" stop-color="#5bc0f7" stop-opacity="0"/>
+        </radialGradient>
+        <radialGradient id="bell-core" cx="42%" cy="38%" r="55%">
+          <stop offset="0%"   stop-color="#ffffff"/>
+          <stop offset="35%"  stop-color="#d8f2ff"/>
+          <stop offset="70%"  stop-color="#7ecef4"/>
+          <stop offset="100%" stop-color="#3a9fd8"/>
+        </radialGradient>
+        <linearGradient id="bell-wingL" x1="0%" y1="20%" x2="80%" y2="100%">
+          <stop offset="0%"   stop-color="#e8f8ff" stop-opacity="0.95"/>
+          <stop offset="50%"  stop-color="#a8e6ff" stop-opacity="0.75"/>
+          <stop offset="100%" stop-color="#5bc0f7" stop-opacity="0.4"/>
+        </linearGradient>
+        <linearGradient id="bell-wingR" x1="100%" y1="20%" x2="20%" y2="100%">
+          <stop offset="0%"   stop-color="#e8f8ff" stop-opacity="0.95"/>
+          <stop offset="50%"  stop-color="#a8e6ff" stop-opacity="0.75"/>
+          <stop offset="100%" stop-color="#5bc0f7" stop-opacity="0.4"/>
+        </linearGradient>
+        <filter id="bell-softglow"><feGaussianBlur stdDeviation="8"/></filter>
+        <filter id="bell-blur"><feGaussianBlur stdDeviation="3"/></filter>
+      </defs>
+      <circle cx="100" cy="100" r="95" fill="url(#bell-glow-outer)" filter="url(#bell-softglow)"/>
+      <circle cx="100" cy="100" r="65" fill="url(#bell-glow-inner)"/>
+      <path d="M82 90 Q58 50 18 22 Q10 28 14 42 Q20 62 38 80 Q56 94 82 98Z"
+            fill="url(#bell-wingL)" stroke="#80ccee" stroke-width="0.8"/>
+      <path d="M82 110 Q56 126 24 162 Q20 170 30 164 Q50 146 68 128 Q80 114 83 110Z"
+            fill="url(#bell-wingL)" stroke="#80ccee" stroke-width="0.6" opacity="0.85"/>
+      <path d="M118 90 Q142 50 182 22 Q190 28 186 42 Q180 62 162 80 Q144 94 118 98Z"
+            fill="url(#bell-wingR)" stroke="#80ccee" stroke-width="0.8"/>
+      <path d="M118 110 Q144 126 176 162 Q180 170 170 164 Q150 146 132 128 Q120 114 117 110Z"
+            fill="url(#bell-wingR)" stroke="#80ccee" stroke-width="0.6" opacity="0.85"/>
+      <circle cx="100" cy="100" r="20" fill="url(#bell-core)" filter="url(#bell-blur)"/>
+      <circle cx="100" cy="100" r="16" fill="url(#bell-core)"/>
+      <ellipse cx="93" cy="93" rx="6" ry="4.5" fill="#ffffff" opacity="0.85" transform="rotate(-20 93 93)"/>
+      <circle cx="104" cy="89" r="2.2" fill="#ffffff" opacity="0.55"/>
+    </svg>
+    <span class="dot"></span>
+    <span id="pending-count">0</span>
+  </div>
   <div id="modal-backdrop">
     <div id="modal">
       <h2>New claude window (in <code>cc</code> session)</h2>
