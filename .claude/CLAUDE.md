@@ -14,6 +14,8 @@
 | `/hackernews` | Hacker News 当前热门帖子 |
 | `/producthunt` | Product Hunt 今日热门产品 |
 | `/brief` | 每日简报，聚合以上所有信息源 |
+| `/swanlab-analyze [实验]` | 分析 SwanLab 训练实验，自动挖掘指标关系并诊断 |
+| `/swanlab-monitor [实验]` | 实时监控运行中的训练实验，研判异常并告警（配 `/loop`） |
 
 ## MCP — 思源笔记
 
@@ -22,6 +24,29 @@
 文件结构：
 - `mcp/siyuan/index.js` — MCP Server 实现
 - `mcp/siyuan/package.json` — 依赖声明
+
+## SwanLab 训练实验分析 / 监控
+
+从 SwanLab（支持自建/云）读取大模型训练实验的原始指标，**自动挖掘指标间关系**（相关 / 领先滞后 / 同步变点 / 指标族离群）并诊断；运行中实验可**实时监控**。分析与监控**拆成两个独立 skill**，各司其职。
+
+设计原则：**最小职责**——取数全部走 `tools/` 下的单一功能脚本（一个脚本只干一件事），脚本只回**裸数据**（不算统计、不判异常）；分析由 `swanlab-analyst` agent 完成；skill 只负责编排。
+
+文件结构：
+- `.claude/skills/swanlab-analyze/SKILL.md` — 分析编排器（深度挖掘关系 + 诊断）
+- `.claude/skills/swanlab-monitor/SKILL.md` — 监控编排器（单周期研判，配 `/loop` 持续盯）
+- `.claude/skills/swanlab/` — **两个 skill 共享的资产包**（无 SKILL.md）
+  - `tools/` — 单一功能取数脚本（凭证读 `~/.navi/config.toml`）
+    - `_common.py` — 共享管线（读配置→构造 `swanlab.Api`），非工具
+    - `list_projects.py` / `list_experiments.py` — 列项目 / 列实验
+    - `get_summary.py` — 实验指标 summary（兼做指标发现）
+    - `get_metrics.py` — 原始折线点（支持 `--all` / `--tail` / `--since-step` / `--out csv`）
+  - `metrics.example.md` — **指标说明默认模板**
+- `.claude/agents/swanlab-analyst.md` — 指标分析 agent（pandas 挖掘关系 + 诊断）
+
+**指标说明（用户唯一需维护的文件）**：`~/.navi/swanlab-metrics.md`（不存在则回退到 `metrics.example.md`）。
+只描述「单个指标是什么」（含义/期望趋势/健康范围/异常信号）；**指标之间的关系由 workflow 自动从数据挖掘**，无需手写，文末可选填强耦合先验。
+
+依赖：`pip install -U swanlab`（需 >=0.8.0，提供 `swanlab.Api`）。
 
 ## tmux-claude-status
 
@@ -64,6 +89,13 @@ token = "ghp_xxx"           # GitHub token，无需勾选任何 scope
 [siyuan]
 url = "http://127.0.0.1:6806"
 token = "your-siyuan-api-token"
+
+[swanlab]
+api_host = "http://host:port/api"   # SWANLAB_API_HOST，自建后端地址（云可留空）
+web_host = "http://host:port"       # SWANLAB_WEB_HOST，前端地址（可留空）
+api_key  = "your-swanlab-api-key"   # SWANLAB_API_KEY
+username = ""                        # 默认 workspace（可选）
+project  = ""                        # 默认项目（可选）
 ```
 
 如果用户不需要某项功能，对应配置可以跳过。
@@ -91,6 +123,13 @@ token = "ghp_xxx"
 [siyuan]
 url = "http://127.0.0.1:6806"
 token = "your-siyuan-api-token"
+
+[swanlab]
+api_host = "http://host:port/api"   # SWANLAB_API_HOST（云可留空）
+web_host = "http://host:port"       # SWANLAB_WEB_HOST（可留空）
+api_key  = "your-swanlab-api-key"   # SWANLAB_API_KEY
+username = ""                        # 默认 workspace（可选）
+project  = ""                        # 默认项目（可选）
 ```
 
 ## 输出规范
