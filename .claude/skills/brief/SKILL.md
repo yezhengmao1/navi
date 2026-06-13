@@ -10,34 +10,42 @@ context: fork
 
 ## 任务
 
-并行调用以下 6 个 skill，汇总为一份精简日报。
+并行调用所选信息源 skill，汇总为一份精简日报。默认全部 6 个，调用前先让用户选择。
 
 ## 执行步骤
 
-### 第一步：并行启动
+### 第一步：让用户选择信息源
 
-用 Agent 工具同时启动 6 个 agent，每个 agent 调用一个 Skill：
+用 `AskUserQuestion` 工具询问用户本次简报要包含哪些信息源，**必须使用多选**（`multiSelect: true`），6 个选项默认全选：
 
-1. `Skill: arxiv`
-2. `Skill: hfpapers`
-3. `Skill: zhihu`
-4. `Skill: hackernews`
-5. `Skill: github`
-6. `Skill: producthunt`
+| 选项 | 对应 skill |
+|------|-----------|
+| arxiv | `arxiv` |
+| HF Papers | `hfpapers` |
+| 知乎 | `zhihu` |
+| Hacker News | `hackernews` |
+| GitHub | `github` |
+| Product Hunt | `producthunt` |
+
+用户的选择决定后续要启动哪些 agent。若用户未选择任何项或跳过，默认使用全部 6 个。
+
+### 第二步：并行启动
+
+用 Agent 工具为**用户所选的每个信息源**同时启动一个 agent，每个 agent 调用对应的 Skill。
 
 每个 agent 的 prompt 为：`使用 Skill 工具调用 {skill名}，将完整输出返回给我。`
 
-### 第二步：汇总输出
+### 第三步：汇总输出
 
 等所有 agent 完成后，将结果汇总为以下格式：
 
 ```
 # 每日简报 — {yyyy-mm-dd}
 
-（依次输出每个 skill 的完整结果，保持各自原有格式）
+（依次输出所选每个 skill 的完整结果，保持各自原有格式）
 ```
 
-### 第三步：写入思源笔记
+### 第四步：写入思源笔记
 
 尝试将简报写入思源笔记：
 
