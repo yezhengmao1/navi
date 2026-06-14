@@ -2,7 +2,7 @@
 name: brief
 description: 每日简报，并行调用 arxiv / HF Papers / 知乎 / HN / GitHub / Product Hunt
 user-invocable: true
-allowed-tools: Agent, mcp__siyuan__list_notebooks, mcp__siyuan__create_doc
+allowed-tools: AskUserQuestion, Agent, mcp__siyuan__list_notebooks, mcp__siyuan__create_doc
 context: fork
 ---
 

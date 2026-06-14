@@ -18,6 +18,8 @@
 | `/hackernews` | Hacker News 当前热门帖子 |
 | `/producthunt` | Product Hunt 今日热门产品 |
 | `/brief` | 每日简报，聚合以上所有信息源 |
+| `/swanlab-analyze [实验]` | 分析 SwanLab 训练实验，自动挖掘指标关系并诊断 |
+| `/swanlab-monitor [实验]` | 实时监控运行中的训练实验，研判异常并告警（配 `/loop`） |
 
 ## 快速开始
 
@@ -41,6 +43,8 @@ claude
 > /hackernews         # Hacker News 热帖
 > /producthunt        # Product Hunt 热门产品
 > /brief              # 每日简报（聚合全部）
+> /swanlab-analyze    # 分析 SwanLab 训练实验，挖掘指标关系
+> /swanlab-monitor    # 实时监控运行中的训练实验（配 /loop）
 ```
 
 ## 配置
@@ -54,10 +58,18 @@ token = "ghp_xxx"
 [siyuan]
 url = "http://127.0.0.1:6806"
 token = "your-siyuan-api-token"
+
+[swanlab]
+api_host = "http://host:port/api"   # SWANLAB_API_HOST，自建后端地址（云可留空）
+web_host = "http://host:port"       # SWANLAB_WEB_HOST，前端地址（可留空）
+api_key  = "your-swanlab-api-key"   # SWANLAB_API_KEY
+username = ""                        # 默认 workspace（可选）
+project  = ""                        # 默认项目（可选）
 ```
 
 - `/github` 需要 GitHub token：[GitHub Settings > Personal access tokens](https://github.com/settings/tokens)，无需勾选任何 scope
 - 思源笔记 MCP 需要配置 `siyuan.url` 和 `siyuan.token`
+- `/swanlab-*` 需要配置 `swanlab` 段并 `pip install -U swanlab`（>=0.8.0）；指标说明维护在 `~/.navi/swanlab-metrics.md`
 
 ## 项目结构
 
@@ -65,15 +77,22 @@ token = "your-siyuan-api-token"
 .claude/
 ├── CLAUDE.md                    # 项目指令
 ├── settings.json                # MCP Server 配置
-└── skills/
-    ├── arxiv/SKILL.md           # arxiv 论文筛选
-    ├── paper/SKILL.md           # 论文深度阅读
-    ├── github/SKILL.md          # GitHub 热榜
-    ├── zhihu/SKILL.md           # 知乎热榜
-    ├── hfpapers/SKILL.md        # HF Daily Papers
-    ├── hackernews/SKILL.md      # Hacker News
-    ├── producthunt/SKILL.md     # Product Hunt
-    └── brief/SKILL.md           # 每日简报
+├── skills/
+│   ├── arxiv/SKILL.md           # arxiv 论文筛选
+│   ├── paper/SKILL.md           # 论文深度阅读
+│   ├── github/SKILL.md          # GitHub 热榜
+│   ├── zhihu/SKILL.md           # 知乎热榜
+│   ├── hfpapers/SKILL.md        # HF Daily Papers
+│   ├── hackernews/SKILL.md      # Hacker News
+│   ├── producthunt/SKILL.md     # Product Hunt
+│   ├── brief/SKILL.md           # 每日简报
+│   ├── swanlab-analyze/SKILL.md # SwanLab 实验分析（挖掘指标关系）
+│   ├── swanlab-monitor/SKILL.md # SwanLab 实时监控
+│   └── swanlab/                 # 两个 swanlab skill 共享的资产包
+│       ├── tools/               # 单一功能取数脚本
+│       └── metrics.example.md   # 指标说明默认模板
+└── agents/
+    └── swanlab-analyst.md       # 指标分析 agent
 mcp/
 └── siyuan/
     ├── index.js                 # 思源笔记 MCP Server
