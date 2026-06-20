@@ -16,6 +16,7 @@
 | `/brief` | 每日简报，聚合以上所有信息源 |
 | `/swanlab-analyze [实验]` | 分析 SwanLab 训练实验，自动挖掘指标关系并诊断 |
 | `/swanlab-monitor [实验]` | 实时监控运行中的训练实验，研判异常并告警（配 `/loop`） |
+| `/server add\|list\|remove` | 管理远程服务器清单（名字/IP/登录方式）|
 
 ## MCP — 思源笔记
 
