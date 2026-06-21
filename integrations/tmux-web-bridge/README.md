@@ -29,7 +29,7 @@ Web UI to monitor and interact with every Claude Code instance running in any tm
 - tmux (3.2+) on every agent box
 - Python 3.10+ on server and agent
 - `tmux-claude-status` hooks installed on each agent box:
-  `bash scripts/tmux-claude-status/install.sh`
+  `bash integrations/tmux-claude-status/install.sh`
 - A browser with ES2020 support
 
 ## Install
@@ -37,7 +37,7 @@ Web UI to monitor and interact with every Claude Code instance running in any tm
 On both server and agent machines:
 
 ```bash
-cd scripts/tmux-web-bridge
+cd integrations/tmux-web-bridge
 pip install -r requirements.txt
 ```
 
@@ -87,7 +87,7 @@ Flags:
 ## Run — server via docker-compose
 
 ```bash
-cd scripts/tmux-web-bridge
+cd integrations/tmux-web-bridge
 echo "BRIDGE_TOKEN=$(openssl rand -hex 16)" > .env   # share this with agents
 docker compose up -d
 ```

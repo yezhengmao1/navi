@@ -8,10 +8,10 @@ tmux 插件，通过 Claude Code hooks 实时追踪所有 Claude 实例状态。
 
 ```bash
 # 安装（写入 hooks 到 ~/.claude/settings.json + tmux 快捷键）
-bash scripts/tmux-claude-status/install.sh
+bash integrations/tmux-claude-status/install.sh
 
 # 卸载
-bash scripts/tmux-claude-status/install.sh --uninstall
+bash integrations/tmux-claude-status/install.sh --uninstall
 ```
 
 ## 文件结构
