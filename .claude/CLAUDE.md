@@ -7,7 +7,7 @@
 | 命令 | 说明 |
 |------|------|
 | `/arxiv` | 筛选今日 arxiv 上 LLM 基模和训练系统相关论文 |
-| `/paper <URL/标题>` | 深度阅读 arxiv 论文 |
+| `/paper sync\|ask\|status` | Zotero 论文库同步 + PaperQA2 语义问答（带引用）|
 | `/github [language]` | GitHub 每日热门仓库，支持按语言筛选 |
 | `/zhihu` | 知乎当前热榜话题 |
 | `/hfpapers` | Hugging Face Daily Papers 今日热门论文 |
@@ -17,6 +17,26 @@
 | `/swanlab-analyze [实验]` | 分析 SwanLab 训练实验，自动挖掘指标关系并诊断 |
 | `/swanlab-monitor [实验]` | 实时监控运行中的训练实验，研判异常并告警（配 `/loop`） |
 | `/server add\|list\|remove` | 管理远程服务器清单（名字/IP/登录方式）|
+
+## Paper — Zotero 论文库语义问答
+
+把 Zotero 的 PDF 同步到本地，用 [PaperQA2](https://github.com/Future-House/paper-qa) 建索引/向量，命令行对自己的论文库做**带引用的语义问答**。LLM 与 embedding 走 SiliconFlow（OpenAI 兼容）。
+
+设计原则：**取数自包**（`zotero_sync.py` 纯 stdlib 走 Zotero API + WebDAV，md5 去重）+ **核心交给 PaperQA2**（解析/切块/向量/检索/引用），skill 只编排 CLI。
+
+```bash
+pip install -r .claude/skills/paper/requirements.txt   # 依赖 paper-qa
+python3 .claude/skills/paper/paper.py sync             # 同步 + 建索引（增量；--full 重建）
+python3 .claude/skills/paper/paper.py ask "问题"       # 带引用问答（省略问题进交互式）
+python3 .claude/skills/paper/paper.py status           # 查看 cache / 索引
+```
+
+文件结构：
+- `.claude/skills/paper/paper.py` — CLI 入口（sync / ask / status）
+- `.claude/skills/paper/config.py` — 读配置 + 构造 PaperQA `Settings`（处理 SiliconFlow 的 `encoding_format` 与 gpt-4o 默认值覆盖）
+- `.claude/skills/paper/zotero_sync.py` — 自包同步（Zotero API + WebDAV + md5 去重）
+
+配置：`~/.navi/config.toml` 的 `[paper]`（cache + SiliconFlow key + 模型）与 `[zotero]`（API key + WebDAV）。可挂 cron 每日 `paper sync` 增量同步。
 
 ## MCP — 思源笔记
 
@@ -55,17 +75,17 @@ tmux 插件，通过 Claude Code hooks 实时追踪所有 Claude 实例状态，
 
 ```bash
 # 安装（写入 hooks 到 ~/.claude/settings.json + tmux 快捷键）
-bash scripts/tmux-claude-status/install.sh
+bash integrations/tmux-claude-status/install.sh
 
 # 卸载
-bash scripts/tmux-claude-status/install.sh --uninstall
+bash integrations/tmux-claude-status/install.sh --uninstall
 ```
 
 文件结构：
-- `scripts/tmux-claude-status/status-hook.sh` — hook 脚本，事件触发时写状态到 `/tmp/claude-status/`
-- `scripts/tmux-claude-status/claude-status.sh` — 弹窗显示脚本
-- `scripts/tmux-claude-status/statusline.sh` — 状态栏组件，有 approval 时显示 ✨
-- `scripts/tmux-claude-status/install.sh` — 安装/卸载
+- `integrations/tmux-claude-status/status-hook.sh` — hook 脚本，事件触发时写状态到 `/tmp/claude-status/`
+- `integrations/tmux-claude-status/claude-status.sh` — 弹窗显示脚本
+- `integrations/tmux-claude-status/statusline.sh` — 状态栏组件，有 approval 时显示 ✨
+- `integrations/tmux-claude-status/install.sh` — 安装/卸载
 
 ## 安装引导
 
@@ -97,9 +117,23 @@ web_host = "http://host:port"       # SWANLAB_WEB_HOST，前端地址（可留�
 api_key  = "your-swanlab-api-key"   # SWANLAB_API_KEY
 username = ""                        # 默认 workspace（可选）
 project  = ""                        # 默认项目（可选）
+
+[zotero]                              # /paper 同步论文用
+api_key         = "your-zotero-key"  # Zotero Web API key（read 即可）
+user_id         = "1234567"          # 数字 userID
+webdav_url      = "https://host/dav/.../zotero/"  # 附件 WebDAV（以 zotero/ 结尾）
+webdav_user     = "name"
+webdav_password = "secret"
+
+[paper]                               # /paper 问答用
+cache     = "~/.navi/paper-cache"    # PDF + 索引 + manifest 根目录
+api_key   = "sk-..."                  # SiliconFlow key
+base_url  = "https://api.siliconflow.cn/v1"
+llm       = "deepseek-ai/DeepSeek-V3"
+embedding = "Qwen/Qwen3-Embedding-8B"
 ```
 
-如果用户不需要某项功能，对应配置可以跳过。
+如果用户不需要某项功能，对应配置可以跳过。`/paper` 还需 `pip install -r .claude/skills/paper/requirements.txt`。
 
 ### 3. claude-hud 状态栏
 
@@ -110,7 +144,7 @@ project  = ""                        # 默认项目（可选）
 如果用户使用 tmux，执行：
 
 ```bash
-bash scripts/tmux-claude-status/install.sh
+bash integrations/tmux-claude-status/install.sh
 ```
 
 ## 配置
@@ -131,6 +165,20 @@ web_host = "http://host:port"       # SWANLAB_WEB_HOST（可留空）
 api_key  = "your-swanlab-api-key"   # SWANLAB_API_KEY
 username = ""                        # 默认 workspace（可选）
 project  = ""                        # 默认项目（可选）
+
+[zotero]
+api_key         = "your-zotero-key"
+user_id         = "1234567"
+webdav_url      = "https://host/dav/.../zotero/"
+webdav_user     = "name"
+webdav_password = "secret"
+
+[paper]
+cache     = "~/.navi/paper-cache"
+api_key   = "sk-..."                  # SiliconFlow key
+base_url  = "https://api.siliconflow.cn/v1"
+llm       = "deepseek-ai/DeepSeek-V3"
+embedding = "Qwen/Qwen3-Embedding-8B"
 ```
 
 ## 输出规范

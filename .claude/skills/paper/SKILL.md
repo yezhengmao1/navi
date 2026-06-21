@@ -1,167 +1,65 @@
 ---
 name: paper
-description: 阅读 arxiv 论文（支持多篇并行），Professor 视角评审 + PhD 视角精读
+description: 把 Zotero 论文库同步到本地并用 PaperQA2 做语义问答——`paper sync` 拉 PDF 建向量索引，`paper ask` 对自己的论文库带引用问答
+argument-hint: "sync | ask [问题] | status"
 user-invocable: true
-allowed-tools: WebFetch, Agent, mcp__siyuan__list_notebooks, mcp__siyuan__create_doc
-context: fork
+allowed-tools: Bash, Read
 ---
 
-# 论文深度阅读
+# Zotero 论文问答（PaperQA2）
 
-## 任务
+把 Zotero 里的 PDF 同步到本地缓存，用 [PaperQA2](https://github.com/Future-House/paper-qa) 建索引/向量，然后在命令行对自己的论文库做**带引用的语义问答**。全程 CLI；LLM 与 embedding 走 SiliconFlow（OpenAI 兼容）。
 
-给定一篇或多篇 arxiv 论文，从两个互补视角深度阅读：**Professor**（高屋建瓴的评审视角）和 **PhD**（扣细节的精读视角）。
+设计原则（沿用 navi 惯例）：
+- **配置统一** `~/.navi/config.toml`：`[paper]`（cache + SiliconFlow key + 模型）、`[zotero]`（API key + WebDAV）。
+- **取数自包**：`zotero_sync.py` 纯 stdlib 直接走 Zotero API + WebDAV，带 md5 去重，不依赖其它脚本。
+- **核心交给 PaperQA2**：解析/切块/向量/检索/引用全由它负责；本目录只做取数 + 编排 CLI。
 
-## 输入
+## 文件
 
-用户可以通过以下方式指定论文：
+- `paper.py` — CLI 入口（`sync` / `ask` / `status`）
+- `config.py` — 读配置、构造 PaperQA `Settings`（已处理 SiliconFlow 的两处坑：embedding 的 `encoding_format`、覆盖 paperqa 默认的 gpt-4o）
+- `zotero_sync.py` — 自包同步：Zotero API 列 PDF → WebDAV 拉 zip → md5 去重 → 落 `cache/pdfs/`
+- `requirements.txt` — `paper-qa>=5`
 
-- **URL**：`/paper http://arxiv.org/abs/2604.02178v1`
-- **标题**：`/paper Expert Strikes Back`（在 arxiv 搜索匹配的论文）
-- **混合**：`/paper http://arxiv.org/abs/2604.02178v1 Expert Strikes Back`
+## 用法
 
-### 解析输入
+```bash
+# 首次：安装依赖
+pip install -r .claude/skills/paper/requirements.txt
 
-1. 如果参数包含 `arxiv.org`，视为 URL
-2. 其余视为论文标题，使用 WebFetch 通过 arxiv API 搜索：
-   ```
-   https://export.arxiv.org/api/query?search_query=ti:"标题关键词"&max_results=1
-   ```
-   从返回结果中提取论文 URL。如果搜索无结果，告知用户未找到匹配论文。
+# 同步 Zotero 新论文并建/更新索引（增量；--full 全量重扫+重建，--limit N 调试）
+python3 .claude/skills/paper/paper.py sync
 
-## 数据获取
+# 问答：带问题=单次；省略=进交互式 REPL
+python3 .claude/skills/paper/paper.py ask "我的库里关于 MoE 路由有哪些工作?"
+python3 .claude/skills/paper/paper.py ask
 
-将每个 URL 转换为 HTML 版本用于阅读：
-- 如果 URL 是 `arxiv.org/abs/XXXX`，转换为 `https://arxiv.org/html/XXXX`
-- 使用 WebFetch 抓取 HTML 版本的全文
-
-如果 HTML 版本不可用（404 或其他错误），直接告知用户该论文的 HTML 版本不可用，无法进行深度阅读分析。
-
-## 并行策略
-
-- **单篇论文**：并行启动 2 个 Agent（Professor + PhD），共享同一篇论文全文
-- **多篇论文**：每篇论文启动 1 个独立 Agent，该 Agent 内部依次完成 Professor 和 PhD 两部分分析。所有论文的 Agent 必须并行启动
-
-## 分析流程
-
-获取论文全文后，启动以下两个视角的分析：
-
-### Professor Agent — 评审视角
-
-以资深研究者 / 审稿人的视角审视论文全局，关注"这篇论文为什么值得读"和"哪里有问题"。
-
-输出结构：
-
-```
-## 🎓 Professor 视角
-
-### 研究定位（Positioning）
-{这篇论文所处的研究领域、学术脉络和前置知识，2-3 句}
-
-### 动机与问题（Motivation）
-{为什么要做这项研究？现有方法的什么不足驱动了本工作？2-3 句}
-
-### 核心创新（Novelty）
-{论文的核心贡献是什么？与最相关的先前工作相比，创新点在哪？2-3 句}
-
-### 优点（Strengths）
-1. {具体优点}
-2. ...
-
-### 不足（Weaknesses）
-1. {具体不足}
-2. ...
-
-### 问题与建议（Questions & Suggestions）
-1. {具体问题或改进建议}
-2. ...
-
-### 总体评价（Verdict）
-{1-2 段综合评价：创新性、实验充分性、写作质量、潜在影响力}
+# 查看缓存/索引状态
+python3 .claude/skills/paper/paper.py status
 ```
 
-要求：
-- 站在同领域审稿人的高度，关注 contribution 是否 solid
-- 具体、有建设性，避免泛泛而谈
-- 评估 claims 是否被实验充分支持
+## 作为 `/paper` 被调用时
 
-### PhD Agent — 精读视角
+`$ARGUMENTS` 第一个词是子命令（`sync` / `ask` / `status`），缺省按 `ask` 处理：
+1. 用 `Bash` 跑 `python3 .claude/skills/paper/paper.py <子命令> [其余参数]`。
+2. `ask` 在非交互场景下应带上完整问题作为参数（一次性问答），把返回的带引用答案整理给用户。
+3. 若报缺少依赖/配置，按下面「配置」提示用户补齐。
 
-以博士生精读论文的视角，逐章拆解方法细节和实验设计，目标是"读完能复现"。
+## 配置（`~/.navi/config.toml`）
 
-输出结构：
+```toml
+[paper]
+cache     = "~/.navi/paper-cache"          # PDF + 索引 + manifest 根目录
+api_key   = "sk-..."                        # SiliconFlow key
+base_url  = "https://api.siliconflow.cn/v1"
+llm       = "deepseek-ai/DeepSeek-V3"       # 问答用大模型
+embedding = "Qwen/Qwen3-Embedding-8B"       # 向量模型
 
+[zotero]
+api_key         = "..."                     # Zotero Web API key（read 即可）
+user_id         = "..."                     # 数字 userID
+webdav_url      = "https://.../zotero/"     # 附件存储 WebDAV（以 zotero/ 结尾）
+webdav_user     = "..."
+webdav_password = "..."
 ```
-## 📖 PhD 视角
-
-### 逐章精读
-
-#### 1. Introduction
-{2-3 句中文总结本章核心内容}
-
-#### 2. Related Work
-{2-3 句中文总结}
-
-#### 3. Method
-{3-5 句中文总结，保留关键公式、算法步骤和设计选择的理由}
-
-#### 4. Experiments
-{3-5 句总结实验设置和结果}
-
-...按论文原始章节结构继续
-
-### 方法细节（Method Deep-Dive）
-{对核心方法的深入拆解：关键公式推导、算法伪代码逻辑、设计选择背后的 intuition。保留重要公式（LaTeX 格式）}
-
-### 实验分析（Experiments Deep-Dive）
-- **数据集**: {使用了哪些数据集，规模和特点}
-- **基线方法**: {对比了哪些方法，为什么选这些}
-- **评估指标**: {使用了哪些指标}
-- **核心结果**: {最重要的实验发现，2-3 句}
-- **Ablation 要点**: {消融实验揭示了什么，哪些组件最关键}
-```
-
-要求：
-- 按论文原始章节结构组织逐章精读
-- 保留关键技术术语英文原文
-- Method 和 Experiments 部分要足够详细，读完能理解核心实现
-- 关注可复现性：超参数、训练细节、数据处理流程
-
-## 输出格式
-
-先输出论文标题和基本信息，然后依次输出两个 Agent 的结果：
-
-```
-# {论文标题}
-
-- **URL**: {链接}
-- **Authors**: {作者}
-
----
-
-{Professor Agent 的输出}
-
----
-
-{PhD Agent 的输出}
-```
-
-## 写入思源笔记
-
-如果 siyuan MCP 可用（`mcp__siyuan__list_notebooks` 能调通），则将每篇论文的阅读笔记写入思源：
-
-1. 调用 `mcp__siyuan__list_notebooks` 找到名为 **navi** 的笔记本，取其 ID
-2. 对每篇论文调用 `mcp__siyuan__create_doc`：
-   - `notebook`: navi 的笔记本 ID
-   - `path`: `/paper/{论文标题的简短英文 slug}`（如 `/paper/expert-strikes-back`）
-   - `markdown`: 该篇论文的完整阅读笔记（标题 + Professor + PhD）
-3. 如果 navi 笔记本不存在或写入失败，跳过并告知用户
-
-## 注意事项
-
-- 所有分析内容用中文输出
-- 保留论文中的关键英文术语、方法名、数据集名
-- 保留重要的数学公式（用 LaTeX 格式）
-- 单篇时两个 Agent 必须并行执行以提高效率
-- 如果论文过长，优先保证 Method 和 Experiments 部分的完整性
-- 写入思源是可选步骤，失败不影响正常输出

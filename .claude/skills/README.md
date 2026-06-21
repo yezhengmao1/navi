@@ -7,7 +7,7 @@ Navi 的全部斜杠命令。每个命令对应一个子目录，操作说明写
 | 命令 | 说明 |
 |------|------|
 | `/arxiv` | 筛选今日 arxiv 上 LLM 基模和训练系统相关论文 |
-| `/paper <URL/标题>` | 深度阅读 arxiv 论文，输出逐段总结、Review、核心要素提取 |
+| `/paper sync\|ask\|status` | Zotero 论文库同步到本地 + PaperQA2 语义问答（带引用），走 SiliconFlow |
 | `/github [language]` | GitHub 每日热门仓库，支持按语言筛选 |
 | `/zhihu` | 知乎当前热榜话题 |
 | `/hfpapers` | Hugging Face Daily Papers 今日热门论文 |
@@ -22,7 +22,8 @@ Navi 的全部斜杠命令。每个命令对应一个子目录，操作说明写
 
 ```
 > /arxiv              # 今日 LLM/训练系统论文
-> /paper Scaling Law  # 按标题搜索并深度阅读
+> /paper sync         # 从 Zotero 同步 PDF 并建索引
+> /paper ask "MoE 路由有哪些工作"  # 对自己的论文库问答
 > /github             # 今日 GitHub 热榜
 > /github rust        # Rust 语言热榜
 > /zhihu              # 知乎热榜
@@ -41,8 +42,9 @@ Navi 的全部斜杠命令。每个命令对应一个子目录，操作说明写
 
 - `/github` 需要 GitHub token：[Personal access tokens](https://github.com/settings/tokens)，无需勾选任何 scope。
 - `/swanlab-*` 需要 `[swanlab]` 段并 `pip install -U swanlab`（>=0.8.0）；指标说明维护在 `~/.navi/swanlab-metrics.md`（不存在则回退 `swanlab/metrics.example.md`）。
+- `/paper` 需要 `[paper]` 段（cache + SiliconFlow key + 模型）与 `[zotero]` 段（API key + WebDAV），并 `pip install -r paper/requirements.txt`（paper-qa）。
 - `/server` 把服务器写入 `[servers.<name>]` 段，无需额外凭证。
-- `/arxiv` `/paper` `/zhihu` `/hfpapers` `/hackernews` `/producthunt` `/brief` 走公开数据源，无需配置。
+- `/arxiv` `/zhihu` `/hfpapers` `/hackernews` `/producthunt` `/brief` 走公开数据源，无需配置。
 
 ## SwanLab 分析 / 监控的内部结构
 
