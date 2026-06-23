@@ -26,29 +26,54 @@ import zotero_sync  # noqa: E402
 from paperqa.agents import agent_query  # noqa: E402
 from paperqa.agents.search import get_directory_index  # noqa: E402
 
+# Zotero 导出文件名惯例：「作者 - YYYY - 标题.pdf」
 _FNAME_RE = re.compile(r"^(.*?)\s*-\s*(\d{4})\s*-\s*(.*)$")
+# 列顺序：year 放最后，缺失时整列省略 → DictReader 读成 None（空串会被 DocDetails 当 int 解析而报错）
+_MANIFEST_COLS = ["file_location", "title", "authors", "journal", "doi", "key", "year"]
+
+
+def _cite_key(text: str) -> str:
+    """从标题/文件名造一个可读的引用 key（缺作者/年份时用，替代 unknownauthorsUnknownyear…）。"""
+    slug = re.sub(r"[^0-9A-Za-z一-鿿]+", "-", text or "").strip("-")
+    return slug[:60] or "doc"
+
+
+def _meta_to_fields(fname: str, meta: dict | None):
+    """(title, authors:list, year:int|None, journal, doi) —— 优先 Zotero meta，回退文件名，再回退 stem。"""
+    if meta and (meta.get("title") or meta.get("authors") or meta.get("year")):
+        return (meta.get("title") or os.path.splitext(fname)[0],
+                meta.get("authors") or [], meta.get("year"),
+                meta.get("journal") or "", meta.get("doi") or "")
+    stem = os.path.splitext(fname)[0]
+    m = _FNAME_RE.match(stem)
+    if m:
+        authors, year, title = m.group(1).strip(), int(m.group(2)), m.group(3).strip()
+        return (title or stem, [authors], year, "", "")
+    return (stem, [], None, "", "")
 
 
 def write_pqa_manifest(cfg) -> int:
-    rows = []
-    for p in sorted(cfg["pdf_dir"].glob("*.pdf")):
-        stem = p.stem
-        m = _FNAME_RE.match(stem)
-        if m:
-            authors, year, title = m.group(1).strip(), m.group(2), m.group(3).strip()
-            row = {
-                "file_location": p.name,
-                "title": f"{title or stem} ({year})",
-                "authors": json.dumps([authors], ensure_ascii=False),
-            }
-        else:
-            row = {"file_location": p.name, "title": stem, "authors": "[]"}
-        rows.append(row)
+    meta_by_name = {}
+    if cfg["manifest"].exists():
+        for v in json.load(open(cfg["manifest"])).get("files", {}).values():
+            fname = v.get("filename") or (os.path.basename(v["path"]) if v.get("path") else None)
+            if fname and v.get("meta"):
+                meta_by_name[fname] = v["meta"]
+
+    pdfs = sorted(cfg["pdf_dir"].glob("*.pdf"))
     with open(cfg["pqa_manifest"], "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=["file_location", "title", "authors"])
-        w.writeheader()
-        w.writerows(rows)
-    return len(rows)
+        w = csv.writer(f)
+        w.writerow(_MANIFEST_COLS)
+        for p in pdfs:
+            title, authors, year, journal, doi = _meta_to_fields(p.name, meta_by_name.get(p.name))
+            # 有作者且有年份 → 留空 key，让 PaperQA 自动生成（如 liu2025simai）；
+            # 否则给一个可读 key，避免出现 unknownauthorsUnknownyear…
+            key = "" if (authors and year) else _cite_key(title or p.stem)
+            cells = [p.name, title, json.dumps(authors, ensure_ascii=False), journal, doi, key]
+            if year:  # year 是最后一列，缺失就不写该格（保持 ragged，读成 None）
+                cells.append(str(year))
+            w.writerow(cells)
+    return len(pdfs)
 
 
 def _answer_text(resp):
@@ -74,6 +99,7 @@ async def cmd_sync(cfg, full=False, limit=0):
     st = zotero_sync.sync(cfg, limit=limit, full=full)
     print(
         f"  新增 {st['pulled']} / 去重跳过 {st['skipped']} / 失败 {st['failed']}"
+        f" / 补书目 {st.get('enriched', 0)}"
         f"（cache 共 {st['total_in_cache']} 篇，library v{st['library_version']}）"
     )
     for f in st["failures"][:10]:

@@ -9,6 +9,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -102,6 +103,7 @@ def _list_pdfs(key, prefix, since):
                 "key": d.get("key"), "version": it.get("version"),
                 "filename": d.get("filename"), "md5": d.get("md5"),
                 "dateAdded": d.get("dateAdded"),
+                "parentItem": d.get("parentItem"),
             })
         start += 100
         if len(batch) < 100:
@@ -114,6 +116,70 @@ def _load_manifest(path: Path) -> dict:
         with open(path) as f:
             return json.load(f)
     return {"library_version": "0", "files": {}}
+
+
+def _items_by_keys(prefix, key, item_keys):
+    """批量按 itemKey 取 Zotero item.data（每批 50，Zotero 单请求上限）。"""
+    out, keys = {}, [k for k in item_keys if k]
+    for i in range(0, len(keys), 50):
+        batch = keys[i:i + 50]
+        resp = _api_get(f"{prefix}/items", key, params={
+            "itemKey": ",".join(batch), "format": "json",
+            "limit": 50, "includeTrashed": 1,
+        })
+        for it in json.loads(resp.read().decode("utf-8")):
+            d = it.get("data", {})
+            if d.get("key"):
+                out[d["key"]] = d
+    return out
+
+
+def _bib_from_parent(pd: dict) -> dict:
+    """把 Zotero 父条目的 data 拍平成 {title, authors[], year, journal, doi}。"""
+    authors = []
+    for c in pd.get("creators", []):
+        if c.get("creatorType") not in (None, "author"):
+            continue
+        name = " ".join(x for x in (c.get("firstName"), c.get("lastName")) if x)
+        name = name or c.get("name")
+        if name:
+            authors.append(name)
+    m = re.search(r"(19|20|21)\d{2}", pd.get("date") or "")
+    year = int(m.group(0)) if m else None
+    journal = next((pd.get(k) for k in (
+        "publicationTitle", "conferenceName", "proceedingsTitle",
+        "journalAbbreviation", "repository", "publisher",
+    ) if pd.get(k)), "")
+    return {
+        "title": pd.get("title") or "", "authors": authors,
+        "year": year, "journal": journal, "doi": pd.get("DOI") or "",
+    }
+
+
+def enrich(cfg: dict, files: dict, force: bool = False) -> int:
+    """给 manifest 里缺 `meta` 的附件补 Zotero 父条目的书目信息（title/authors/year…）。
+
+    纯 Zotero API（批量），不下载附件；写入 files[key]['meta']。返回补全条数。
+    """
+    targets = [k for k, v in files.items() if force or "meta" not in v]
+    if not targets:
+        return 0
+    key, prefix, _ = _z(cfg["zotero"])
+    # 老 manifest 没记 parentItem 的，按 itemKey 批量回查附件拿 parentItem
+    need_parent = [k for k in targets if not files[k].get("parentItem")]
+    if need_parent:
+        for k, d in _items_by_keys(prefix, key, need_parent).items():
+            if k in files:
+                files[k]["parentItem"] = d.get("parentItem")
+    parent_of = {k: files[k].get("parentItem") for k in targets if files[k].get("parentItem")}
+    parents = _items_by_keys(prefix, key, set(parent_of.values()))
+    n = 0
+    for k, pk in parent_of.items():
+        pd = parents.get(pk)
+        if pd is not None:
+            files[k]["meta"] = _bib_from_parent(pd)
+            n += 1
+    return n
 
 
 def sync(cfg: dict, limit: int = 0, full: bool = False) -> dict:
@@ -155,11 +221,18 @@ def sync(cfg: dict, limit: int = 0, full: bool = False) -> dict:
             with open(dest, "wb") as f:
                 f.write(pdf_bytes)
             files[k] = {"path": str(dest), "md5": got, "filename": fname,
-                        "version": p.get("version"), "dateAdded": p.get("dateAdded")}
+                        "version": p.get("version"), "dateAdded": p.get("dateAdded"),
+                        "parentItem": p.get("parentItem")}
             known_md5.add(got)
             pulled.append({"key": k, "path": str(dest), "bytes": len(pdf_bytes)})
         except Exception as e:  # noqa: BLE001
             failed.append({"key": k, "why": f"{type(e).__name__}: {e}"})
+
+    try:
+        enriched = enrich(cfg, files)
+    except Exception as e:  # noqa: BLE001 — 补书目失败不应让同步失败
+        enriched = 0
+        failed.append({"key": "(enrich)", "why": f"{type(e).__name__}: {e}"})
 
     if lib_version:
         manifest["library_version"] = lib_version
@@ -168,6 +241,7 @@ def sync(cfg: dict, limit: int = 0, full: bool = False) -> dict:
 
     return {
         "pulled": len(pulled), "skipped": len(skipped), "failed": len(failed),
+        "enriched": enriched,
         "library_version": manifest.get("library_version"),
         "total_in_cache": len(files),
         "pulled_files": pulled, "failures": failed,
