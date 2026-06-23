@@ -54,6 +54,10 @@ def load() -> dict:
         "base_url": paper.get("base_url", "https://api.siliconflow.cn/v1"),
         "llm": paper.get("llm", "zai-org/GLM-5.2"),
         "embedding": paper.get("embedding", "Qwen/Qwen3-Embedding-8B"),
+        # 每批嵌入的文本数。高维向量（如 Qwen3-Embedding-8B 4096 维）批量过大时
+        # SiliconFlow 的响应体会被截断（~1MB）→ JSON 解析失败而整次建索引中断；
+        # 故默认压到 4（每响应 ~260KB，远低于截断点），可在 [paper] 调。
+        "embedding_batch": int(paper.get("embedding_batch", 4)),
         "concurrency": int(paper.get("concurrency", 4)),
         "zotero": data.get("zotero") or {},
     }
@@ -78,7 +82,7 @@ def paperqa_settings(cfg: dict):
         llm_config={"kwargs": kw_llm},
         summary_llm_config={"kwargs": kw_llm},
         embedding=f"openai/{cfg['embedding']}",
-        embedding_config={"kwargs": kw_embed},
+        embedding_config={"batch_size": cfg["embedding_batch"], "kwargs": kw_embed},
         parsing={"multimodal": "off", "use_doc_details": False},
         agent={
             "agent_llm": llm,
