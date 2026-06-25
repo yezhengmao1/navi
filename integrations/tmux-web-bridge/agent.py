@@ -268,37 +268,48 @@ async def _in_copy_mode(pane_id: str) -> bool:
     return out.decode(errors="replace").strip() == "1"
 
 
+# SGR mouse button codes for the scroll wheel (xterm 1006 encoding).
+_WHEEL_UP = 64
+_WHEEL_DOWN = 65
+
+
+def _wheel_seq(button: int, col: int, row: int, count: int) -> str:
+    """`count` SGR wheel events at (col,row). Wheel is press-only — no release —
+    so one `…M` per notch, repeated."""
+    return f"\x1b[<{button};{col};{row}M" * max(1, count)
+
+
 async def scroll_pane(pane_id: str, action: str) -> None:
-    """Drive tmux copy-mode so the visible area reveals scrollback. The next
-    capture-pane poll will reflect the new viewport."""
-    if action == "exit":
-        if await _in_copy_mode(pane_id):
-            await tmux("send-keys", "-t", pane_id, "-X", "cancel")
-        return
-    if not await _in_copy_mode(pane_id):
-        if action in ("up", "page_up"):
-            await tmux("copy-mode", "-t", pane_id)
-        else:
-            return
-    # If we're in copy-mode already at the bottom (scroll_position == 0), any
-    # further "down" scroll just wastes a round-trip — exit copy-mode instead
-    # so the viewport snaps back to the live pane.
-    if action in ("down", "page_down"):
-        info = await pane_info(pane_id)
-        if info is not None:
-            _, _, sp, in_mode = info
-            if in_mode and sp <= 0:
-                await tmux("send-keys", "-t", pane_id, "-X", "cancel")
-                return
-    cmd = {
-        "up":        "scroll-up",
-        "down":      "scroll-down",
-        "page_up":   "page-up",
-        "page_down": "page-down",
+    """Forward the wheel straight into the pane as SGR mouse events and let the
+    foreground app scroll itself; the next capture-pane reflects whatever it
+    redrew.
+
+    Claude Code drives its own in-TUI scrollback: it enables SGR mouse tracking
+    (1006) + any-event reporting (1003) on the alternate screen, so wheel events
+    belong to Claude, not tmux. The old path drove tmux copy-mode, which slides
+    over tmux's *scrollback buffer* — but Claude's alt-screen redraw never
+    populates that buffer, so copy-mode scroll revealed nothing. Talking to the
+    app directly is also simpler: no copy-mode enter/exit state to track.
+    """
+    info = await pane_info(pane_id)
+    cols, rows = (info[0], info[1]) if info else (80, 24)
+    # Aim at the middle of the transcript area — away from Claude's input box at
+    # the very bottom — so the wheel lands where it scrolls.
+    col = max(1, cols // 2)
+    row = max(1, rows // 2)
+    # One notch ≈ a few lines; a page ≈ a screenful; "exit" snaps to the live
+    # bottom by flooding wheel-down (the app clamps at the end).
+    plan = {
+        "up":        (_WHEEL_UP, 3),
+        "down":      (_WHEEL_DOWN, 3),
+        "page_up":   (_WHEEL_UP, max(1, rows - 2)),
+        "page_down": (_WHEEL_DOWN, max(1, rows - 2)),
+        "exit":      (_WHEEL_DOWN, 500),
     }.get(action)
-    if not cmd:
+    if not plan:
         return
-    await tmux("send-keys", "-t", pane_id, "-X", cmd)
+    button, count = plan
+    await tmux("send-keys", "-t", pane_id, "-l", _wheel_seq(button, col, row, count))
 
 
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9._-]+")

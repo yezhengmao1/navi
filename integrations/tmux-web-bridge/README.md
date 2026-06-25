@@ -171,6 +171,6 @@ Server → agent:
 
 ## Limits
 
-- Only the **visible** screen is captured. To view scrollback, scroll with the mouse wheel (or Shift+PageUp / PageDown, or PageUp/PageDown while the input box is focused) — the browser drives tmux copy-mode on the remote pane and the next capture reflects the new viewport. Press Escape to leave copy-mode.
+- Only the **visible** screen is captured. To view scrollback, scroll with the mouse wheel (or Shift+PageUp / PageDown, or PageUp/PageDown while the input box is focused) — the browser forwards the wheel as SGR mouse events into the remote pane, the foreground app (e.g. Claude Code, which owns its own in-TUI scrollback) scrolls itself, and the next capture reflects the new viewport. Apps that don't grab the mouse fall back to tmux copy-mode; the agent still mirrors that if you enter it by hand.
 - Agent ↔ server pane list re-sync is ~2 s.
 - Snapshot cadence is bounded by `agent.py --poll-hz` (default 3 Hz); only the active pane on each browser is polled.

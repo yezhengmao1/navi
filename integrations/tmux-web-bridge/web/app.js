@@ -246,8 +246,10 @@ termWrap.addEventListener("wheel", (e) => {
     return;
   }
   if (!activeKey) return;
-  // Relay the wheel to tmux copy-mode so the pane's visible window slides
-  // over its own scrollback. The next capture-pane poll redraws us.
+  // Relay the wheel to the agent, which forwards it into the pane as SGR mouse
+  // events; the foreground app (e.g. Claude Code) scrolls itself and the next
+  // capture-pane poll redraws us. (The in_copy_mode branches below stay dormant
+  // unless someone drives tmux copy-mode by hand.)
   e.preventDefault();
   if (e.deltaY > 0 && lastGrid && lastGrid.in_copy_mode && (lastGrid.scroll_position || 0) <= 0) {
     sendScroll("exit");
