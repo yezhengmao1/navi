@@ -32,6 +32,30 @@ const fitBtn      = document.getElementById("fit-btn");
 const copyBtn     = document.getElementById("copy-btn");
 const exitScrollBtn = document.getElementById("exit-scroll-btn");
 const clearInputBtn = document.getElementById("clear-input-btn");
+const mainEl      = document.getElementById("main");
+
+// The whole app is laid out with overflow:hidden — nothing here is meant to
+// scroll except the sidebar pane-list and the input textarea. But a
+// programmatic scroll (the browser auto-scrolling a focused/off-screen
+// element into view, an IME, scrollIntoView) can still shove an
+// overflow:hidden container's scrollTop, which slides the terminal out of
+// view with no way to scroll it back — the "整页被滚走，看不到会话" bug.
+// Snap any such container straight back to the origin. (Cheap: these only
+// fire on the rare stray programmatic scroll, never on normal use.)
+function snapBack(el) {
+  if (!el) return;
+  if (el.scrollTop !== 0) el.scrollTop = 0;
+  if (el.scrollLeft !== 0) el.scrollLeft = 0;
+}
+// Page-level scroll is dispatched on the document and bubbles to window.
+window.addEventListener("scroll", () => {
+  snapBack(document.scrollingElement || document.documentElement);
+  snapBack(document.body);
+}, { passive: true });
+// Container-level scroll fires on the element itself (doesn't bubble).
+for (const el of [mainEl, termWrap]) {
+  if (el) el.addEventListener("scroll", () => snapBack(el), { passive: true });
+}
 
 const BASE_FONT_SIZE = 20;
 const MIN_ZOOM = 0.3;
@@ -682,7 +706,7 @@ window.addEventListener("mouseup", async (e) => {
 if (exitScrollBtn) {
   exitScrollBtn.addEventListener("click", () => {
     sendScroll("exit");
-    if (!inputEl.disabled) inputEl.focus();
+    if (!inputEl.disabled) inputEl.focus({ preventScroll: true });
   });
 }
 
@@ -792,6 +816,11 @@ if (copyBtn) {
 let ws = null;
 let panes = [];
 let activeKey = null;
+// The pane the user last picked. Survives a transient "gone"/empty-list blip
+// (e.g. a status-hook file mid-rewrite, or a scan that briefly missed the
+// pane) so we can re-attach when it reappears instead of stranding the user
+// on the "Select a pane" placeholder. Cleared only on an explicit kill.
+let lastActiveKey = null;
 let reconnectTimer = null;
 
 function setConn(state, label) {
@@ -819,6 +848,13 @@ function connect() {
       case "panes":
         panes = msg.panes || [];
         renderPanes();
+        // Re-attach if a transient blip ("gone"/empty list) knocked us off a
+        // pane that's now back — otherwise the user is stuck on the placeholder
+        // until they click the session again.
+        if (activeKey == null && lastActiveKey &&
+            panes.some((p) => p.key === lastActiveKey)) {
+          selectPane(lastActiveKey);
+        }
         break;
       case "grid":
         if (msg.key === activeKey) {
@@ -900,7 +936,7 @@ function renderPanes() {
       projEl.addEventListener("dblclick", (e) => {
         e.stopPropagation();
         projEl.contentEditable = "true";
-        projEl.focus();
+        projEl.focus({ preventScroll: true });
         const sel = window.getSelection();
         const range = document.createRange();
         range.selectNodeContents(projEl);
@@ -1187,6 +1223,7 @@ function selectPane(key) {
     ws.send(JSON.stringify({ type: "unsubscribe", key: activeKey }));
   }
   activeKey = key;
+  lastActiveKey = key;
   lastGrid = null;
   clearCanvas();
   updateActiveUI();
@@ -1213,7 +1250,7 @@ function updateActiveUI() {
   // Auto-focus on desktop is convenient; on mobile it pops the virtual
   // keyboard the instant you pick a pane, burying the terminal. Let the
   // user tap the textarea when they actually want to type.
-  if (active && !isMobile()) inputEl.focus();
+  if (active && !isMobile()) inputEl.focus({ preventScroll: true });
 }
 
 function killActivePane() {
@@ -1222,6 +1259,7 @@ function killActivePane() {
   const p = panes.find((x) => x.key === activeKey);
   const label = p ? displayName(p) : activeKey;
   if (!confirm(`Kill tmux window "${label}"?\n\nAny running claude/process in it will be terminated.`)) return;
+  if (lastActiveKey === activeKey) lastActiveKey = null;
   ws.send(JSON.stringify({ type: "kill", key: activeKey }));
 }
 
@@ -1230,7 +1268,7 @@ if (killBtn) killBtn.addEventListener("click", killActivePane);
 if (clearInputBtn) clearInputBtn.addEventListener("click", (e) => {
   e.preventDefault();
   inputEl.value = "";
-  if (!inputEl.disabled) inputEl.focus();
+  if (!inputEl.disabled) inputEl.focus({ preventScroll: true });
 });
 
 function sendNamedKey(name) {
@@ -1244,7 +1282,7 @@ keyBtns.forEach((btn) => {
     e.preventDefault();
     sendNamedKey(btn.dataset.key);
     // Keep focus in the textarea so typing can continue without re-clicking.
-    if (!inputEl.disabled) inputEl.focus();
+    if (!inputEl.disabled) inputEl.focus({ preventScroll: true });
   });
 });
 

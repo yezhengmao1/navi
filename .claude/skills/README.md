@@ -17,6 +17,7 @@ Navi 的全部斜杠命令。每个命令对应一个子目录，操作说明写
 | `/swanlab-analyze [实验]` | 分析 SwanLab 训练实验，自动挖掘指标关系并诊断 |
 | `/swanlab-monitor [实验]` | 实时监控运行中的训练实验，研判异常并告警（配 `/loop`） |
 | `/server add\|list\|remove` | 管理远程服务器清单（名字/IP/登录方式）写入 `~/.navi/config.toml` |
+| `/navi sync\|pull\|status` | 把 `~/.navi`（config + cache）镜像备份到 WebDAV，换机可恢复 |
 
 ## 用法示例
 
@@ -34,6 +35,8 @@ Navi 的全部斜杠命令。每个命令对应一个子目录，操作说明写
 > /swanlab-analyze    # 分析 SwanLab 训练实验，挖掘指标关系
 > /swanlab-monitor    # 实时监控运行中的训练实验（配 /loop）
 > /server add         # 登记一台远程服务器
+> /navi sync          # 把 ~/.navi 备份到 WebDAV
+> /navi pull          # 换机时从 WebDAV 恢复 ~/.navi
 ```
 
 ## 各命令所需配置
@@ -44,6 +47,7 @@ Navi 的全部斜杠命令。每个命令对应一个子目录，操作说明写
 - `/swanlab-*` 需要 `[swanlab]` 段并 `pip install -U swanlab`（>=0.8.0）；指标说明维护在 `~/.navi/swanlab-metrics.md`（不存在则回退 `swanlab/metrics.example.md`）。
 - `/paper` 需要 `[paper]` 段（cache + SiliconFlow key + 模型）与 `[zotero]` 段（API key + WebDAV），并 `pip install -r paper/requirements.txt`（paper-qa）。
 - `/server` 把服务器写入 `[servers.<name>]` 段，无需额外凭证。
+- `/navi` 备份 `~/.navi` 到 WebDAV，需 `[navi]` 段三项：`webdav_url` / `webdav_user` / `webdav_password`。
 - `/arxiv` `/zhihu` `/hfpapers` `/hackernews` `/producthunt` `/brief` 走公开数据源，无需配置。
 
 ## SwanLab 分析 / 监控的内部结构

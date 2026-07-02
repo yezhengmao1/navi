@@ -17,6 +17,8 @@
 | `/swanlab-analyze [实验]` | 分析 SwanLab 训练实验，自动挖掘指标关系并诊断 |
 | `/swanlab-monitor [实验]` | 实时监控运行中的训练实验，研判异常并告警（配 `/loop`） |
 | `/server add\|list\|remove` | 管理远程服务器清单（名字/IP/登录方式）|
+| `/navi sync\|pull\|status` | 把 `~/.navi`（config + cache）镜像备份到 WebDAV，换机可恢复 |
+| `/hiboard` | 把任务结果推送到华为/荣耀手机「负一屏」（HiBoard 服务动态）|
 
 ## Paper — Zotero 论文库语义问答
 
@@ -40,7 +42,7 @@ python3 .claude/skills/paper/paper.py status           # 查看 cache / 索引
 
 ## MCP — 思源笔记
 
-通过 MCP Server 连接思源笔记，支持文档创建、编辑、搜索等操作。配置在 `.claude/settings.json` 中。
+通过 MCP Server 连接思源笔记，支持文档创建、编辑、搜索等操作。配置在仓库根 `.mcp.json` 中（Claude Code 只从 `.mcp.json` / `~/.claude.json` 读取 MCP server，不读 `settings.json`）。
 
 文件结构：
 - `mcp/siyuan/index.js` — MCP Server 实现
@@ -68,6 +70,44 @@ python3 .claude/skills/paper/paper.py status           # 查看 cache / 索引
 只描述「单个指标是什么」（含义/期望趋势/健康范围/异常信号）；**指标之间的关系由 workflow 自动从数据挖掘**，无需手写，文末可选填强耦合先验。
 
 依赖：`pip install -U swanlab`（需 >=0.8.0，提供 `swanlab.Api`）。
+
+## Navi 配置/缓存 WebDAV 备份
+
+把整个 `~/.navi/`（`config.toml` + `paper-cache/` + `swanlab-metrics.md` 等）镜像到 WebDAV，多机同步 / 换机恢复。URL 与 WebDAV 账号全部写在 `[navi]` 段（`webdav_url` / `webdav_user` / `webdav_password`），独立配置，不复用其它段。
+
+设计原则：**取数自包**（`webdav.py` 纯 stdlib，PROPFIND/PUT/GET/DELETE，跟随 alist 的 302 直链；OSS 后端目录隐式，靠 PUT 隐式建路径）+ **增量**（`~/.navi/.navi-sync.json` 记每文件 md5，未变跳过；日志/锁/`__pycache__` 不传）。
+
+```bash
+python3 .claude/skills/navi/navi.py sync             # 本地 → WebDAV（增量；--delete 真镜像）
+python3 .claude/skills/navi/navi.py pull             # WebDAV → 本地（换机恢复）
+python3 .claude/skills/navi/navi.py status           # 看本地与远端差异
+```
+
+文件结构：
+- `.claude/skills/navi/navi.py` — CLI 入口（sync / pull / status）
+- `.claude/skills/navi/webdav.py` — 极简 WebDAV 客户端
+
+可挂 cron 每日 `navi sync` 增量备份。`[navi]` 段三项必填：`webdav_url` / `webdav_user` / `webdav_password`。
+
+## Hiboard — 负一屏推送
+
+任务完成后把 markdown 结果推送到华为/荣耀手机「负一屏」（HiBoard 服务动态）。原理是一次
+HTTPS POST 到负一屏云端点，body 带 `authCode` + 一条 `msgContent`（markdown 正文）。
+
+设计原则：**极简自包**——`push.py` 纯 stdlib（`urllib` + `tomllib`），只做「读配置 → 拼
+标准 payload → POST → 解析响应码」，无外部依赖。
+
+```bash
+python3 .claude/skills/hiboard/push.py --data task.json          # 推送（JSON 文件，格式最稳）
+python3 .claude/skills/hiboard/push.py --data task.json --dry-run # 只看 payload 不发
+```
+
+文件结构：
+- `.claude/skills/hiboard/SKILL.md` — 编排说明
+- `.claude/skills/hiboard/push.py` — CLI 入口（读配置 + 构造 payload + 推送）
+
+配置：`~/.navi/config.toml` 的 `[hiboard]` 段，`auth_code` 必填（手机负一屏 → 我的 →
+动态管理 → 关联账号 → Claw 智能体 获取），`push_url` 可选（默认华为云端点）。
 
 ## tmux-claude-status
 
