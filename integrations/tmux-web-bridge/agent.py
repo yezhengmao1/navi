@@ -37,12 +37,22 @@ log = logging.getLogger("tmux-agent")
 
 
 async def tmux(*args: str) -> tuple[int, bytes, bytes]:
-    proc = await asyncio.create_subprocess_exec(
-        "tmux", *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    out, err = await proc.communicate()
+    # Degrade a spawn/IO failure to a non-zero exit instead of raising. Under a
+    # burst of concurrent tmux calls (e.g. fast scrolling) the OS can briefly
+    # refuse to fork (EAGAIN); letting that propagate would kill the scan/poll
+    # loops, whereas every caller already treats a non-zero code as "try again".
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "tmux", *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        out, err = await proc.communicate()
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        log.warning("tmux %s failed to run: %s", args[0] if args else "", e)
+        return 1, b"", str(e).encode()
     return (proc.returncode or 0), out, err
 
 
@@ -124,14 +134,22 @@ async def _approval_dialog_visible(pane_id: str) -> bool:
     return any(m in text for m in _PENDING_DIALOG_MARKERS)
 
 
-async def list_all_panes() -> tuple[dict[str, dict], set[str]]:
-    """Return (claude-panes-with-overlay, all-tmux-pane-ids).
+async def list_all_panes() -> tuple[dict[str, dict], set[str]] | None:
+    """Return (claude-panes-with-overlay, all-tmux-pane-ids), or None when the
+    enumeration itself failed.
 
     The overlay-filtered dict drives the sidebar. The raw pane-id set is
     what the scan loop uses to decide whether a poller should be cancelled;
     keying that off the overlay alone caused pollers to die whenever a
     status-hook file was mid-rewrite (brief JSON parse failure → pane
     missing from overlay → poller cancelled before its first snapshot).
+
+    Returning None (rather than an empty result) on a failed `list-panes` is
+    load-bearing: a transient tmux hiccup — most likely during a scroll burst,
+    when extra tmux subprocesses contend with this one — must NOT look like
+    "all panes vanished", or the scan loop would broadcast an empty list, the
+    server would `gone` every subscription, and every browser would snap back
+    to the "Select a pane" placeholder. The caller skips the tick instead.
     """
     code, out, _ = await tmux(
         "list-panes", "-a", "-F",
@@ -139,7 +157,7 @@ async def list_all_panes() -> tuple[dict[str, dict], set[str]]:
         "#{pane_current_path}\t#{pane_current_command}",
     )
     if code != 0:
-        return {}, set()
+        return None
     overlay = _read_status_overlay()
     result: dict[str, dict] = {}
     all_pids: set[str] = set()
@@ -279,6 +297,52 @@ def _wheel_seq(button: int, col: int, row: int, count: int) -> str:
     return f"\x1b[<{button};{col};{row}M" * max(1, count)
 
 
+async def _mouse_grabbed(pane_id: str) -> bool:
+    """True if the pane's foreground app has any mouse-reporting mode on.
+    `mouse_any_flag` is set whenever the app requested mouse tracking (1000–
+    1003) — i.e. it will consume the SGR wheel events we'd inject. When it's
+    off, those bytes would land as literal keystrokes instead of scrolling."""
+    code, out, _ = await tmux(
+        "display-message", "-p", "-t", pane_id, "#{mouse_any_flag}",
+    )
+    if code != 0:
+        return False
+    return out.decode(errors="replace").strip() == "1"
+
+
+async def _scroll_copy_mode(pane_id: str, action: str) -> None:
+    """Fallback for apps that don't grab the mouse: drive tmux copy-mode so the
+    visible area slides over tmux's own scrollback. The next capture-pane poll
+    reflects the new viewport."""
+    if action == "exit":
+        if await _in_copy_mode(pane_id):
+            await tmux("send-keys", "-t", pane_id, "-X", "cancel")
+        return
+    if not await _in_copy_mode(pane_id):
+        if action in ("up", "page_up"):
+            await tmux("copy-mode", "-t", pane_id)
+        else:
+            return
+    # Already at the live bottom (scroll_position == 0): a further "down" just
+    # wastes a round-trip — exit copy-mode so the viewport snaps back instead.
+    if action in ("down", "page_down"):
+        info = await pane_info(pane_id)
+        if info is not None:
+            _, _, sp, in_mode = info
+            if in_mode and sp <= 0:
+                await tmux("send-keys", "-t", pane_id, "-X", "cancel")
+                return
+    cmd = {
+        "up":        "scroll-up",
+        "down":      "scroll-down",
+        "page_up":   "page-up",
+        "page_down": "page-down",
+    }.get(action)
+    if not cmd:
+        return
+    await tmux("send-keys", "-t", pane_id, "-X", cmd)
+
+
 async def scroll_pane(pane_id: str, action: str) -> None:
     """Forward the wheel straight into the pane as SGR mouse events and let the
     foreground app scroll itself; the next capture-pane reflects whatever it
@@ -290,7 +354,17 @@ async def scroll_pane(pane_id: str, action: str) -> None:
     over tmux's *scrollback buffer* — but Claude's alt-screen redraw never
     populates that buffer, so copy-mode scroll revealed nothing. Talking to the
     app directly is also simpler: no copy-mode enter/exit state to track.
+
+    But this only works while the app actually grabs the mouse. Claude enables
+    mouse tracking only on its alt-screen — not at the shell, not during a
+    full-screen subprocess (a pager spawned by a Bash tool), and not in the
+    brief window before/after it runs. Inject SGR bytes then and they're typed
+    as literal keystrokes (the "莫名其妙" garbage / lost session). So gate on
+    the live mouse flag and fall back to copy-mode when it's off.
     """
+    if not await _mouse_grabbed(pane_id):
+        await _scroll_copy_mode(pane_id, action)
+        return
     info = await pane_info(pane_id)
     cols, rows = (info[0], info[1]) if info else (80, 24)
     # Aim at the middle of the transcript area — away from Claude's input box at
@@ -578,7 +652,17 @@ class Agent:
     async def _scan_loop(self) -> None:
         try:
             while True:
-                found, all_pids = await list_all_panes()
+                enumerated = await list_all_panes()
+                if enumerated is None:
+                    # `list-panes` failed this tick (transient tmux hiccup).
+                    # Hold the last known pane set rather than treating it as
+                    # "everything vanished" — broadcasting an empty list here
+                    # would `gone` every browser's active pane and cancel all
+                    # pollers for nothing. Just wait and retry.
+                    now = asyncio.get_event_loop().time()
+                    await asyncio.sleep(0.25 if now < self.fast_scan_until else 2.0)
+                    continue
+                found, all_pids = enumerated
                 if found != self.panes:
                     self.panes = found
                     if self.ws is not None:

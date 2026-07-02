@@ -42,7 +42,7 @@ python3 .claude/skills/paper/paper.py status
 ## 作为 `/paper` 被调用时
 
 `$ARGUMENTS` 第一个词是子命令（`sync` / `ask` / `status`），缺省按 `ask` 处理：
-1. 用 `Bash` 跑 `python3 .claude/skills/paper/paper.py <子命令> [其余参数]`。
+1. 用 `Bash` 跑 `python3 "<本 skill 的 base directory>/paper.py" <子命令> [其余参数]`——**用调用时给出的 base directory 拼绝对路径**，别用相对 cwd 的路径（cwd 可能不在仓库根）。
 2. `ask` 在非交互场景下应带上完整问题作为参数（一次性问答），把返回的带引用答案整理给用户。
 3. 若报缺少依赖/配置，按下面「配置」提示用户补齐。
 
