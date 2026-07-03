@@ -160,12 +160,14 @@ python3 .claude/skills/dlc/dlc.py workspaces              # 列可访问工作�
 ### 巡检 agent（dlc-inspector）
 
 `.claude/agents/dlc-inspector.md` —— 训练集群值守 agent。用 `dlc` skill 列全部 Running 任务、
-并行取每个任务最后节点日志，逐个研判（🔴 僵尸挂起 / nan / loss 崩坏，⚠️ 数据加载抖动 / 吞吐骤降，
-✅ 正常），整理成分级报告并用 `hiboard` skill 推送到负一屏。取数/告警全走两个 skill 的脚本，
-自己不碰 API；只告警不改任务。可配 `/loop` 定时值守：
+并行取每个任务最后节点日志，逐个研判（🔴 HANG 挂起 / nan / loss 崩坏，⚠️ 数据加载抖动 / 吞吐骤降，
+✅ 正常，含进度与预估完成时间），整理成分级报告并用 `hiboard` skill 推送负一屏、`feishu` skill
+推送飞书群。取数/告警全走 skill 的脚本，自己不碰 API；只告警不改任务。**飞书 KEY 在触发时以参数
+给出、不落盘**，不给则只推负一屏。可配 `/loop` 定时值守：
 
 ```
 用 dlc-inspector agent 巡检一次 DLC 任务并推送负一屏
+用 dlc-inspector agent 巡检 DLC 任务，飞书 KEY 用 1b64311b-...，推送负一屏和飞书
 ```
 
 ## tmux-claude-status
