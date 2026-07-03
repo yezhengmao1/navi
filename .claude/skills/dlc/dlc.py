@@ -297,7 +297,18 @@ def main():
     ap.add_argument("--json", action="store_true", help="输出 JSON（便于程序解析）")
     sub = ap.add_subparsers(dest="cmd")
 
+    # --json 同时挂到每个子命令上（default=SUPPRESS：不给就沿用顶层值，给了才覆盖），
+    # 这样 `dlc.py --json list` 和 `dlc.py list --json` 都能用。
+    def add_json(parser):
+        parser.add_argument(
+            "--json",
+            action="store_true",
+            default=argparse.SUPPRESS,
+            help="输出 JSON（便于程序解析）",
+        )
+
     p = sub.add_parser("list", help="列任务（默认全部工作空间的 Running）")
+    add_json(p)
     p.add_argument(
         "--status",
         default="Running",
@@ -314,11 +325,12 @@ def main():
     p.add_argument("--days", type=int, default=None, help="只看最近 N 天创建的任务")
 
     p = sub.add_parser("logs", help="取某任务最后一个节点的日志")
+    add_json(p)
     p.add_argument("job_id")
     p.add_argument("--lines", type=int, default=50, help="尾部行数，默认 50")
     p.add_argument("--pod", default=None, help="指定 pod（子串匹配，如 worker-3）")
 
-    sub.add_parser("workspaces", help="列可访问的工作空间")
+    add_json(sub.add_parser("workspaces", help="列可访问的工作空间"))
 
     args = ap.parse_args()
     cfg = load_cfg()
