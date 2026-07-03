@@ -19,6 +19,7 @@
 | `/server add\|list\|remove` | 管理远程服务器清单（名字/IP/登录方式）|
 | `/navi sync\|pull\|status` | 把 `~/.navi`（config + cache）镜像备份到 WebDAV，换机可恢复 |
 | `/hiboard` | 把任务结果推送到华为/荣耀手机「负一屏」（HiBoard 服务动态）|
+| `/feishu 「内容」` | 把内容推送到飞书群自定义机器人（webhook，KEY 可传参或配置）|
 | `/dlc list\|logs\|workspaces` | 查阿里云 PAI-DLC 训练任务（跨工作空间列 Running + 卡数/时长/属主，取节点日志）|
 
 ## Paper — Zotero 论文库语义问答
@@ -109,6 +110,29 @@ python3 .claude/skills/hiboard/push.py --data task.json --dry-run # 只看 paylo
 
 配置：`~/.navi/config.toml` 的 `[hiboard]` 段，`auth_code` 必填（手机负一屏 → 我的 →
 动态管理 → 关联账号 → Claw 智能体 获取），`push_url` 可选（默认华为云端点）。
+
+## Feishu — 飞书群机器人推送
+
+把 markdown 内容推送到飞书群「自定义机器人」。webhook 形如
+`https://open.feishu.cn/open-apis/bot/v2/hook/<KEY>`，**KEY 可传参（`--key`，优先）
+或写进配置**。无标题走 `text` 消息，带 `--title` 自动升级为 `interactive` 卡片
+（正文按 `lark_md` 渲染 markdown）。
+
+设计原则：**极简自包**——`push.py` 纯 stdlib（`urllib` + `tomllib`），读入参/配置的
+KEY → 拼 payload → POST → 解析 `code`，无外部依赖。
+
+```bash
+python3 .claude/skills/feishu/push.py --key <KEY> --content report.md        # 纯文本
+python3 .claude/skills/feishu/push.py --key <KEY> --title 简报 --data task.json # markdown 卡片
+python3 .claude/skills/feishu/push.py --data task.json --dry-run             # 只看 payload
+```
+
+文件结构：
+- `.claude/skills/feishu/SKILL.md` — 编排说明
+- `.claude/skills/feishu/push.py` — CLI 入口（KEY 参数优先，回退 `[feishu].key`）
+
+配置：`~/.navi/config.toml` 的 `[feishu]` 段可选填 `key`（`--key` 未传时用）与 `base_url`
+（默认飞书官方端点）。机器人若开了「签名校验」本 skill 不支持，请改用「自定义关键词」。
 
 ## DLC — 阿里云 PAI-DLC 任务查询
 
