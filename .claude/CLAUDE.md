@@ -19,6 +19,7 @@
 | `/server add\|list\|remove` | 管理远程服务器清单（名字/IP/登录方式）|
 | `/navi sync\|pull\|status` | 把 `~/.navi`（config + cache）镜像备份到 WebDAV，换机可恢复 |
 | `/hiboard` | 把任务结果推送到华为/荣耀手机「负一屏」（HiBoard 服务动态）|
+| `/dlc list\|logs\|workspaces` | 查阿里云 PAI-DLC 训练任务（跨工作空间列 Running + 卡数/时长/属主，取节点日志）|
 
 ## Paper — Zotero 论文库语义问答
 
@@ -108,6 +109,40 @@ python3 .claude/skills/hiboard/push.py --data task.json --dry-run # 只看 paylo
 
 配置：`~/.navi/config.toml` 的 `[hiboard]` 段，`auth_code` 必填（手机负一屏 → 我的 →
 动态管理 → 关联账号 → Claw 智能体 获取），`push_url` 可选（默认华为云端点）。
+
+## DLC — 阿里云 PAI-DLC 任务查询
+
+用阿里云官方 SDK 读训练任务列表与日志。先 `ListWorkspaces` 拿到你能访问的**全部**工作空间，
+再逐个 `ListJobs`（`show_own=False`），这样看得到同事在同一工作空间的任务；GPU 卡数 / 已运行时长 /
+属主（真人名 `username`）都取自 `ListJobs` 返回项，列表无需逐个 `GetJob`，只有 `logs` 才按 pod 取。
+
+设计原则：**取数交给官方 SDK**，skill 只编排 + 中文小结；`list` 默认只列 `Running` 且滤掉 GPU=0
+的辅助任务（convert-ckpt 等），并给出合计卡数与「我 vs 他人」拆分。
+
+```bash
+pip install alibabacloud_pai_dlc20201203 alibabacloud_aiworkspace20210204 alibabacloud_tea_openapi
+python3 .claude/skills/dlc/dlc.py list                    # 全部 Running（跨工作空间 + 合计卡数）
+python3 .claude/skills/dlc/dlc.py logs <jobid> --lines 50 # 最后一个节点的日志尾部
+python3 .claude/skills/dlc/dlc.py workspaces              # 列可访问工作空间
+```
+
+文件结构：
+- `.claude/skills/dlc/SKILL.md` — 编排说明
+- `.claude/skills/dlc/dlc.py` — CLI 入口（list / logs / workspaces）
+
+配置：`~/.navi/config.toml` 的 `[dlc]` 段（`access_key_id` / `access_key_secret` / `region`，
+`workspace_id` 可选）。**务必用 RAM 子账号只读密钥**，别用主账号 AK。
+
+### 巡检 agent（dlc-inspector）
+
+`.claude/agents/dlc-inspector.md` —— 训练集群值守 agent。用 `dlc` skill 列全部 Running 任务、
+并行取每个任务最后节点日志，逐个研判（🔴 僵尸挂起 / nan / loss 崩坏，⚠️ 数据加载抖动 / 吞吐骤降，
+✅ 正常），整理成分级报告并用 `hiboard` skill 推送到负一屏。取数/告警全走两个 skill 的脚本，
+自己不碰 API；只告警不改任务。可配 `/loop` 定时值守：
+
+```
+用 dlc-inspector agent 巡检一次 DLC 任务并推送负一屏
+```
 
 ## tmux-claude-status
 
