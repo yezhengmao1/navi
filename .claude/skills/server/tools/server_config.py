@@ -150,7 +150,7 @@ def cmd_remove(args):
     emit({"ok": True, "action": "removed", "name": args.name, "config": CONFIG_PATH})
 
 
-def main():
+def parse_args():
     ap = argparse.ArgumentParser(description="管理 ~/.navi/config.toml 的远程服务器条目")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
@@ -170,9 +170,9 @@ def main():
     r.add_argument("--name", required=True)
     r.set_defaults(func=cmd_remove)
 
-    args = ap.parse_args()
-    args.func(args)
+    return ap.parse_args()
 
 
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    args.func(args)

@@ -248,10 +248,14 @@ def sync(cfg: dict, limit: int = 0, full: bool = False) -> dict:
     }
 
 
-if __name__ == "__main__":
+def parse_args():
     ap = argparse.ArgumentParser()
     ap.add_argument("--full", action="store_true")
     ap.add_argument("--limit", type=int, default=0)
-    a = ap.parse_args()
+    return ap.parse_args()
+
+
+if __name__ == "__main__":
+    a = parse_args()
     out = sync(config.load(), limit=a.limit, full=a.full)
     print(json.dumps(out, ensure_ascii=False, indent=2))

@@ -7,11 +7,15 @@ import argparse
 import _common as c
 
 
-def main():
+def parse_args():
     ap = argparse.ArgumentParser(description="列出 SwanLab 实验")
     ap.add_argument("--username", help="workspace；省略则用配置默认或当前用户")
     ap.add_argument("--project", help="项目名；省略则用配置默认")
-    args = ap.parse_args()
+    return ap.parse_args()
+
+
+if __name__ == "__main__":
+    args = parse_args()
     with c.session() as (cfg, api):
         username = args.username or cfg.get("username") or api.username
         project = args.project or cfg.get("project")
@@ -22,7 +26,3 @@ def main():
         out = [c.exp_brief(e) for e in runs]
         c.emit({"username": username, "project": project, "count": len(out),
                 "experiments": out})
-
-
-if __name__ == "__main__":
-    main()

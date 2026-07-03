@@ -126,15 +126,18 @@ def push(payload: dict, url: str, timeout: int = 30) -> dict:
         return {"code": "?", "msg": raw[:500]}
 
 
-def main() -> int:
+def parse_args():
     ap = argparse.ArgumentParser(description="推送内容到飞书群机器人")
     ap.add_argument("--key", help="webhook 末段（hook/ 之后那串），优先于配置")
     ap.add_argument("--data", help="任务 JSON 文件路径")
     ap.add_argument("--title", help="卡片标题；给了则以 interactive 卡片推送")
     ap.add_argument("--content", help="正文：文件路径 / '-' 读 stdin / 直接文本")
     ap.add_argument("--dry-run", action="store_true", help="只打印 payload，不实际发送")
-    args = ap.parse_args()
+    return ap.parse_args()
 
+
+if __name__ == "__main__":
+    args = parse_args()
     cfg = load_cfg()
     task = read_task(args)
     # KEY 优先级：--key > task.json 里的 key > 配置 [feishu].key
@@ -148,7 +151,7 @@ def main() -> int:
 
     if args.dry_run:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
-        return 0
+        sys.exit(0)
 
     try:
         resp = push(payload, url)
@@ -162,7 +165,7 @@ def main() -> int:
     code = resp.get("code", resp.get("StatusCode"))
     if code in (0, "0"):
         print(f"✅ 推送成功{('：' + task['title']) if task.get('title') else ''}")
-        return 0
+        sys.exit(0)
     hint = {
         19021: "签名校验失败（该机器人开了签名校验，本 skill 未支持；请在群机器人设置里改用「自定义关键词」或关闭校验）",
         19024: "关键词校验失败（机器人设了自定义关键词，正文需包含其中之一）",
@@ -171,8 +174,4 @@ def main() -> int:
     print(f"❌ 推送失败 code={code} msg={resp.get('msg')}")
     if hint:
         print(f"   → {hint}")
-    return 1
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(1)
