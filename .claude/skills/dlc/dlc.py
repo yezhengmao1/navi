@@ -292,7 +292,7 @@ def cmd_workspaces(cfg, args):
         print(f"  {wid}  {name}")
 
 
-def main():
+def parse_args():
     ap = argparse.ArgumentParser(description="阿里云 PAI-DLC 任务查询")
     ap.add_argument("--json", action="store_true", help="输出 JSON（便于程序解析）")
     sub = ap.add_subparsers(dest="cmd")
@@ -333,18 +333,17 @@ def main():
     add_json(sub.add_parser("workspaces", help="列可访问的工作空间"))
 
     args = ap.parse_args()
-    cfg = load_cfg()
+    if args.cmd is None:  # 裸调用默认 list（重解析后 --json 自然为 False）
+        args = ap.parse_args(["list"])
+    return args
 
-    if args.cmd == "list" or args.cmd is None:
-        if args.cmd is None:  # 裸调用默认 list
-            args = ap.parse_args(["list"])
-            args.json = False
+
+if __name__ == "__main__":
+    args = parse_args()
+    cfg = load_cfg()
+    if args.cmd == "list":
         cmd_list(cfg, args)
     elif args.cmd == "logs":
         cmd_logs(cfg, args)
     elif args.cmd == "workspaces":
         cmd_workspaces(cfg, args)
-
-
-if __name__ == "__main__":
-    main()

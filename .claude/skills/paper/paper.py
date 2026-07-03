@@ -176,7 +176,7 @@ def cmd_status(cfg):
         )
 
 
-if __name__ == "__main__":
+def parse_args():
     ap = argparse.ArgumentParser(
         prog="paper", description="基于 PaperQA2 的 Zotero 论文问答"
     )
@@ -187,8 +187,11 @@ if __name__ == "__main__":
     ap_ask = sub.add_parser("ask", help="对论文库问答（交互或单次）")
     ap_ask.add_argument("question", nargs="?", help="一次性问题；省略进交互式")
     sub.add_parser("status", help="查看 cache / 索引状态")
-    args = ap.parse_args()
+    return ap.parse_args()
 
+
+if __name__ == "__main__":
+    args = parse_args()
     cfg = config.load()
     if args.cmd == "sync":
         asyncio.run(cmd_sync(cfg, full=args.full, limit=args.limit))

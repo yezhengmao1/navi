@@ -15,7 +15,7 @@ import os
 import _common as c
 
 
-def main():
+def parse_args():
     ap = argparse.ArgumentParser(description="取 SwanLab 实验原始指标点")
     c.add_path_args(ap)
     ap.add_argument("--keys", help="逗号分隔；省略则取全部标量指标")
@@ -24,8 +24,11 @@ def main():
     ap.add_argument("--sample", type=int, default=1500, help="服务端采样上限（默认 1500）")
     ap.add_argument("--all", action="store_true", help="拉全分辨率数据，不采样")
     ap.add_argument("--out", help="把原始点写入 CSV（长表：key,step,value,timestamp）")
-    args = ap.parse_args()
+    return ap.parse_args()
 
+
+if __name__ == "__main__":
+    args = parse_args()
     with c.session() as (cfg, api):
         path = c.resolve_path(api, cfg, args)
         with c.quiet():
@@ -72,7 +75,3 @@ def main():
             "series": series,
             "csv": os.path.abspath(args.out) if args.out else None,
         })
-
-
-if __name__ == "__main__":
-    main()

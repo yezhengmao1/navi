@@ -10,11 +10,15 @@ import argparse
 import _common as c
 
 
-def main():
+def parse_args():
     ap = argparse.ArgumentParser(description="取 SwanLab 实验 summary")
     c.add_path_args(ap)
     ap.add_argument("--keys", help="逗号分隔；省略则取全部指标")
-    args = ap.parse_args()
+    return ap.parse_args()
+
+
+if __name__ == "__main__":
+    args = parse_args()
     with c.session() as (cfg, api):
         path = c.resolve_path(api, cfg, args)
         keys = [k.strip() for k in args.keys.split(",")] if args.keys else None
@@ -22,7 +26,3 @@ def main():
             exp = api.run(path)
             summary = exp.summary(keys=keys)
         c.emit({"path": path, "experiment": c.exp_brief(exp), "summary": summary})
-
-
-if __name__ == "__main__":
-    main()

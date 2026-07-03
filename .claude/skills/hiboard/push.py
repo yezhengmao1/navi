@@ -124,15 +124,18 @@ def push(payload: dict, url: str, timeout: int = 30) -> dict:
         return {"code": "?", "desc": raw[:500]}
 
 
-def main() -> int:
+def parse_args():
     ap = argparse.ArgumentParser(description="推送任务结果到负一屏（HiBoard）")
     ap.add_argument("--data", help="任务 JSON 文件路径")
     ap.add_argument("--name", help="任务名（不用 --data 时）")
     ap.add_argument("--content", help="markdown 正文：文件路径 / '-' 读 stdin / 直接文本")
     ap.add_argument("--result", help="任务结果描述，默认「任务已完成」")
     ap.add_argument("--dry-run", action="store_true", help="只打印 payload，不实际发送")
-    args = ap.parse_args()
+    return ap.parse_args()
 
+
+if __name__ == "__main__":
+    args = parse_args()
     cfg = load_cfg()
     task = read_task(args)
     payload = build_payload(task, cfg["auth_code"])
@@ -142,7 +145,7 @@ def main() -> int:
         ac = shown["data"]["authCode"]
         shown["data"]["authCode"] = ac[:4] + "***"  # 脱敏
         print(json.dumps(shown, ensure_ascii=False, indent=2))
-        return 0
+        sys.exit(0)
 
     try:
         resp = push(payload, cfg["push_url"])
@@ -154,7 +157,7 @@ def main() -> int:
     code = str(resp.get("code", ""))
     if code in ("0000000000", "0"):
         print(f"✅ 推送成功：{task['task_name']}")
-        return 0
+        sys.exit(0)
     hint = {
         "0000900034": "授权码无效或未关联：负一屏 → 我的 → 动态管理 → 关联账号 → Claw 智能体 重新获取",
         "0200100004": "负一屏云推送异常，检查手机已联网/登录华为账号，且「动态管理」里 AI 任务完成通知开关已开",
@@ -162,8 +165,4 @@ def main() -> int:
     print(f"❌ 推送失败 code={code} desc={resp.get('desc')}")
     if hint:
         print(f"   → {hint}")
-    return 1
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(1)

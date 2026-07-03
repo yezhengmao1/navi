@@ -167,12 +167,16 @@ def status(cfg: dict) -> dict:
             "only_remote": only_remote}
 
 
-if __name__ == "__main__":
+def parse_args():
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd", choices=["sync", "pull", "status"], nargs="?", default="sync")
     ap.add_argument("--delete", action="store_true", help="镜像模式：删除目标端多余文件")
     ap.add_argument("--dry-run", action="store_true", help="只预演不实际传输")
-    a = ap.parse_args()
+    return ap.parse_args()
+
+
+if __name__ == "__main__":
+    a = parse_args()
     conf = load_cfg()
     if a.cmd == "sync":
         result = sync(conf, delete=a.delete, dry=a.dry_run)
