@@ -184,6 +184,9 @@ def cmd_list(cfg, args):
                         "duration": _duration_str(j, now),
                         "owner": getattr(j, "username", None)
                         or getattr(j, "user_id", ""),
+                        # 资源池（自管理 ACK 池名，如 infra / ai_lab_resources）；
+                        # 用于按池汇总运行/排队卡量。取不到回退占位。
+                        "resource_pool": getattr(j, "resource_name", None) or "-",
                         "gmt_running_time": getattr(j, "gmt_running_time", None),
                         "gmt_create_time": j.gmt_create_time,
                     }
@@ -195,10 +198,18 @@ def cmd_list(cfg, args):
     rows.sort(key=lambda r: -r["gpu"])
     total = sum(r["gpu"] for r in rows)
 
+    # 按资源池汇总卡量（含任务数），供上层直接分池展示 运行/排队 卡量。
+    pools: dict[str, dict] = {}
+    for r in rows:
+        p = pools.setdefault(r["resource_pool"], {"pool": r["resource_pool"], "gpu": 0, "jobs": 0})
+        p["gpu"] += r["gpu"]
+        p["jobs"] += 1
+    by_pool = sorted(pools.values(), key=lambda p: -p["gpu"])
+
     if args.json:
         print(
             json.dumps(
-                {"count": len(rows), "total_gpu": total, "jobs": rows},
+                {"count": len(rows), "total_gpu": total, "by_pool": by_pool, "jobs": rows},
                 ensure_ascii=False,
                 indent=2,
             )
