@@ -3,7 +3,6 @@ name: brief
 description: 每日简报，并行调用 arxiv / HF Papers / 知乎 / HN / GitHub / Product Hunt
 user-invocable: true
 allowed-tools: AskUserQuestion, Agent, mcp__siyuan__list_notebooks, mcp__siyuan__create_doc
-context: fork
 ---
 
 # 每日简报
@@ -14,9 +13,11 @@ context: fork
 
 ## 执行步骤
 
-### 第一步：让用户选择信息源
+### 第一步：确定信息源
 
-用 `AskUserQuestion` 工具询问用户本次简报要包含哪些信息源，**必须使用多选**（`multiSelect: true`），6 个选项默认全选：
+**若调用时带了参数**（如 `/brief arxiv 知乎`，`$ARGUMENTS` 非空），直接按参数匹配下表选定信息源，跳过提问。
+
+**未带参数时**，用 `AskUserQuestion` 工具询问用户本次简报要包含哪些信息源，**必须使用多选**（`multiSelect: true`），6 个选项默认全选：
 
 | 选项 | 对应 skill |
 |------|-----------|
@@ -58,6 +59,7 @@ context: fork
 
 ## 注意事项
 
+- 本 skill 必须在主会话执行，**不能加 `context: fork`**——fork 出的子 agent 里 AskUserQuestion 等交互工具不可用，会导致无法让用户选择信息源
 - 某个源获取失败时跳过该板块并注明，不阻塞其他板块
 - **全量输出**：保持各 skill 返回的完整条目数和原始格式，禁止截断、合并或精简（如知乎 30 条就写 30 条，不能只写 Top 10）
 - 写入思源时同样使用完整内容，不得缩写
