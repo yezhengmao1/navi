@@ -188,6 +188,29 @@ bash integrations/tmux-claude-status/install.sh --uninstall
 - `integrations/tmux-claude-status/statusline.sh` — 状态栏组件，有 approval 时显示 ✨
 - `integrations/tmux-claude-status/install.sh` — 安装/卸载
 
+## token-statusline — Token 用量状态栏
+
+在 Claude Code 状态栏**常驻一行**显示模型 / 上下文 / 订阅额度 / 燃烧速率 / 今日总 token，
+把 claude-hud（上下文%）+ ccusage（燃烧速率、今日 token）+ hook 原生 `rate_limits`（5h 额度）
+合成一行：
+
+```
+🤖 Opus 4.8 | 🧠 61% (92k) | ⏳ 5h 42% (1h5m) | 🔥 $23.7/hr | 📅 67.6M today
+```
+
+设计原则：**前台零重活**——模型 / 上下文% / 5h 额度全部从 hook JSON 与 claude-hud 本地取
+（渲染 ~0.1s）；ccusage 的慢活（`daily` 今日 token、`statusline` 燃烧速率，都要扫全量日志）
+**后台异步刷新**写缓存（`flock` 防并发），状态栏只读缓存永不阻塞。无 Node 环境用 **bun** 跑
+ccusage / claude-hud。
+
+- `~/.claude/statusline.sh` — 合成脚本（`settings.json` 的 `statusLine` 指向它）
+- `~/.claude/claude-hud/dist/` — claude-hud（手动接线，只取其上下文%）
+- ccusage — bun 全局装，仅用 `daily` / `statusline`
+- 完整安装步骤与脚本：`integrations/token-statusline/README.md`
+
+额度段（`⏳`）与内置 `/usage` 同源（hook 的 `rate_limits`），仅订阅账号 + 较新 Claude Code 下发；
+缺字段时自动省略。看准确额度进度用 `/usage`。
+
 ## 安装引导
 
 当用户首次使用或询问如何安装时，按以下步骤引导：
@@ -236,9 +259,11 @@ embedding = "Qwen/Qwen3-Embedding-8B"
 
 如果用户不需要某项功能，对应配置可以跳过。`/paper` 还需 `pip install -r .claude/skills/paper/requirements.txt`。
 
-### 3. claude-hud 状态栏
+### 3. Token 用量状态栏
 
-执行 `/claude-hud:setup` 安装 Claude Code 状态栏插件，在终端实时显示工作状态。
+按 `integrations/token-statusline/README.md` 装 bun + ccusage + claude-hud，把用量常驻状态栏
+（模型 / 上下文 / 5h 额度 / 燃烧速率 / 今日 token）。只想要 claude-hud 官方版可直接
+`/plugin marketplace add jarrodwatts/claude-hud` → `/plugin install claude-hud` → `/claude-hud:setup`。
 
 ### 4. tmux-claude-status（可选）
 
