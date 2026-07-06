@@ -268,13 +268,20 @@ def _freshest_pod(dlc, dlc_models, job_id, pods):
     绕开「固定取 worker 序号最大 pod」常读到陈旧缓存日志导致误判 HANG 的问题。
     只探测 Worker 型 pod（训练 iteration 打在 worker 上；master 只做协调）；
     Worker 型为空则退回全部 pod。全部探测失败返回 None，调用方自行回退。
+    探测并发进行——大任务上百 pod 时顺序探测会超时（如 6144 卡任务）。
     """
+    from concurrent.futures import ThreadPoolExecutor
+
     workers = [p for p in pods if "worker" in (p.type or "").lower()] or pods
+
+    def probe(p):
+        return p, _pod_latest_ts(dlc, dlc_models, job_id, p.pod_id)
+
     best, best_ts = None, None
-    for p in workers:
-        ts = _pod_latest_ts(dlc, dlc_models, job_id, p.pod_id)
-        if ts is not None and (best_ts is None or ts > best_ts):
-            best, best_ts = p, ts
+    with ThreadPoolExecutor(max_workers=min(16, len(workers) or 1)) as ex:
+        for p, ts in ex.map(probe, workers):
+            if ts is not None and (best_ts is None or ts > best_ts):
+                best, best_ts = p, ts
     return best
 
 
