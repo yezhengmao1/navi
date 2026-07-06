@@ -17,18 +17,26 @@ allowed-tools: AskUserQuestion, Agent, mcp__siyuan__list_notebooks, mcp__siyuan_
 
 **若调用时带了参数**（如 `/brief arxiv 知乎`，`$ARGUMENTS` 非空），直接按参数匹配下表选定信息源，跳过提问。
 
-**未带参数时**，用 `AskUserQuestion` 工具询问用户本次简报要包含哪些信息源，**必须使用多选**（`multiSelect: true`），6 个选项默认全选：
+**未带参数时**，用 `AskUserQuestion` 工具询问用户本次简报要包含哪些信息源。
 
-| 选项 | 对应 skill |
-|------|-----------|
-| arxiv | `arxiv` |
-| HF Papers | `hfpapers` |
-| 知乎 | `zhihu` |
-| Hacker News | `hackernews` |
-| GitHub | `github` |
-| Product Hunt | `producthunt` |
+> ⚠️ `AskUserQuestion` **每个问题最多 4 个选项**，6 个源塞不进一题。所以**拆成两个分类问题**
+> 一次性问（`AskUserQuestion` 的 `questions` 传两个元素，会在同一弹窗里并列展示），**两题都 `multiSelect: true`**：
+>
+> - **第 1 题「学术论文类」**（`header: 论文源`）：`arxiv`、`HF Papers`
+> - **第 2 题「社区热榜类」**（`header: 热榜源`）：`知乎`、`Hacker News`、`GitHub`、`Product Hunt`
+>
+> 两题合并即为全部 6 个源，用户可跨题任意勾选。
 
-用户的选择决定后续要启动哪些 agent。若用户未选择任何项或跳过，默认使用全部 6 个。
+| 选项 | 对应 skill | 分类 |
+|------|-----------|------|
+| arxiv | `arxiv` | 论文源 |
+| HF Papers | `hfpapers` | 论文源 |
+| 知乎 | `zhihu` | 热榜源 |
+| Hacker News | `hackernews` | 热榜源 |
+| GitHub | `github` | 热榜源 |
+| Product Hunt | `producthunt` | 热榜源 |
+
+两题的勾选合并后决定要启动哪些 agent。若用户两题都未选或跳过，默认使用全部 6 个。
 
 ### 第二步：并行启动
 
