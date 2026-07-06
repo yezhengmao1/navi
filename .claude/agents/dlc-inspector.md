@@ -36,7 +36,9 @@ GPU=0 的辅助任务（convert-ckpt 等）已默认过滤——不巡检。若 
 
 ### 2. 取每个 Running 任务最后节点的日志
 
-对每个 job，用 `Skill` 工具调用 `dlc` skill，参数 `logs <job_id> --json --lines <N>`（任务多时可在一条消息里并发发起多个 skill 调用）。返回 `{pod_id, pod_status, node, lines[]}`，`lines` 是该任务 **worker 序号最大那个节点**（“最后一个节点”）的日志尾部——**研判只依据这一个节点的日志**，不去翻别的节点。
+对每个 job，用 `Skill` 工具调用 `dlc` skill，参数 `logs <job_id> --json --lines <N> --fresh`（任务多时可在一条消息里并发发起多个 skill 调用）。返回 `{pod_id, pod_status, node, lines[]}`。
+
+**务必带 `--fresh`**：不带时 `logs` 固定取「worker 序号最大」那个 pod，常读到该 pod 的**陈旧缓存日志**（时间戳停在几小时前甚至倒退），害得反复把正常任务误判成 HANG（iqcoder / M1-A10B / MOE-MTP 都栽过）。`--fresh` 会探测各 worker pod 的尾部时间戳、自动返回**日志最新**的那个节点，从源头绕开旧缓存——你**基本不用再手动换 pod**。仅当 `--fresh` 返回的节点仍显示疑似停滞、要交叉印证时，才手动 `--pod <另一pod>` 复核。
 
 **取日志行数 `<N>` 是可传入参数**：调用方在触发时可指定（如「日志取 300 行」「--lines 80」），agent 用传入值；**未指定则默认 150 行**。行数越大窗口内 iteration 行越多、速度按整段求平均越稳（见「研判口径」的速度项），但更费 token；打印稀疏或想更准测速时调大，任务多想省 token 时调小。
 
@@ -54,7 +56,7 @@ GPU=0 的辅助任务（convert-ckpt 等）已默认过滤——不巡检。若 
 **判 🔴 铁律（血泪教训，务必逐条过）**：
 
 1. **阈值别太敏感**：只有「最新步距今 > max(30 分钟, 15×该任务单步耗时)」才算 HANG 候选。仅差几个单步（如 78 s/it 的任务才 4~5 分钟没新步、只差三四步）是**正常抖动 / 日志未 flush，判 ✅**，不要报 🔴。
-2. **落判前必须换 pod 复核**：`dlc logs` 默认取的「最后一个节点」经常拿到**某个 pod 的陈旧缓存日志**（时间戳停在几小时前、甚至**比上轮读到的还旧 / step 号倒退**）——而另一个 worker 其实在正常前进。凡要判 🔴，先对该任务换 1~2 个 worker `dlc logs <job_id> --json --lines 150 --pod <另一pod>`：**任一节点**最新步在近期就判**正常**（写明哪个 pod、iter、距今几分钟）；**所有查到的节点**都停在很久前、iter 不再涨，才判 🔴。**绝不凭单节点的陈旧读数报 HANG**（MOE-MTP / iquest0612 / iqcoder 连续三轮都栽在这，换 pod 后都是正常的）。
+2. **优先用 `--fresh` 取数，避免陈旧缓存误判**：取日志一律带 `--fresh`（见流程第 2 步），它已自动返回「日志最新」的 worker pod，绝大多数旧缓存假 HANG 从源头消除。**若 `--fresh` 返回的节点仍疑似停滞才落判 🔴**，且落判前再手动换 1~2 个 worker `dlc logs <job_id> --json --lines 150 --pod <另一pod>` 交叉印证：**任一节点**最新步在近期就判**正常**（写明 pod / iter / 距今）；**所有查到的节点**都停在很久前、iter 不再涨，才判 🔴。**绝不凭单节点的陈旧读数报 HANG**（MOE-MTP / iquest0612 / iqcoder 屡次栽在这，复核后都是正常的）。
 3. **step 号倒退 = 旧缓存/重启信号**：某任务本轮 iter 比上轮小、或时间戳倒退，几乎必是读到旧 pod，按第 2 条换 pod，别当 HANG。
 4. **Pending / 非 Running 的 pod = 在排队等调度，不是 HANG**，注明「Pending 等调度」，不告警。刚启动**几分钟**在初始化（git sync / pip / 下 ckpt / 建通信）属正常。
 5. **推理 / 评估服务（日志是 `VLLMRouter` / `vllm` / `router`，如 `iquest-30A3-ablation_ab_metrics`）本就没有训练 iteration**，归「推理服务·非训练」单列，**不按训练 HANG 研判、不报 🔴**。
