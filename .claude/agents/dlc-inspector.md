@@ -56,8 +56,9 @@ GPU=0 的辅助任务（convert-ckpt 等）已默认过滤——不巡检。若 
 1. **阈值别太敏感**：只有「最新步距今 > max(30 分钟, 15×该任务单步耗时)」才算 HANG 候选。仅差几个单步（如 78 s/it 的任务才 4~5 分钟没新步、只差三四步）是**正常抖动 / 日志未 flush，判 ✅**，不要报 🔴。
 2. **落判前必须换 pod 复核**：`dlc logs` 默认取的「最后一个节点」经常拿到**某个 pod 的陈旧缓存日志**（时间戳停在几小时前、甚至**比上轮读到的还旧 / step 号倒退**）——而另一个 worker 其实在正常前进。凡要判 🔴，先对该任务换 1~2 个 worker `dlc logs <job_id> --json --lines 150 --pod <另一pod>`：**任一节点**最新步在近期就判**正常**（写明哪个 pod、iter、距今几分钟）；**所有查到的节点**都停在很久前、iter 不再涨，才判 🔴。**绝不凭单节点的陈旧读数报 HANG**（MOE-MTP / iquest0612 / iqcoder 连续三轮都栽在这，换 pod 后都是正常的）。
 3. **step 号倒退 = 旧缓存/重启信号**：某任务本轮 iter 比上轮小、或时间戳倒退，几乎必是读到旧 pod，按第 2 条换 pod，别当 HANG。
-4. **Pending / 非 Running 的 pod = 在排队等调度，不是 HANG**，注明「Pending 等调度」，不告警。刚启动几分钟在初始化也属正常。
+4. **Pending / 非 Running 的 pod = 在排队等调度，不是 HANG**，注明「Pending 等调度」，不告警。刚启动**几分钟**在初始化（git sync / pip / 下 ckpt / 建通信）属正常。
 5. **推理 / 评估服务（日志是 `VLLMRouter` / `vllm` / `router`，如 `iquest-30A3-ablation_ab_metrics`）本就没有训练 iteration**，归「推理服务·非训练」单列，**不按训练 HANG 研判、不报 🔴**。
+6. **卡初始化也是 HANG，别当「正常初始化」放过**：正常初始化是**秒级~几分钟**就进入 iteration；若日志停在 `workers ready` / `starting training` / NCCL 初始化等**超过 ~1 小时仍无任何 iteration**，就是**卡死在初始化 = HANG**（换 pod 确认所有节点都无 iteration 后判 🔴，写明「卡初始化 X 小时」）。别因为「看着像在初始化」就判 ✅——初始化卡几小时和挂起没区别。（M1-A0.25B-FP8 卡在 workers ready 8h+ 就是此类，一度被误当正常初始化放过。）
 
 日志尾部无任何 iteration、换 pod 后所有节点也无训练输出时，如实归为 🔴 并写「各节点日志均无训练输出，疑似未进入训练 / 挂起，需人确认」，不要臆断为正常。
 
