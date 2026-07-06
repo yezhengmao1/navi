@@ -1,0 +1,375 @@
+<title>FP8 · 末层激活离群漂移</title>
+<style>
+  :root{
+    --bg:#0d1014; --panel:#141922; --panel2:#1b2230; --line:#26313f;
+    --text:#e7edf4; --muted:#8b98a9; --faint:#5d6879; --grid:rgba(255,255,255,.055);
+    --bf16:#7d8ba0; --fb:#34c0a4; --e5m2:#eab04a; --wop2:#ec5f57;
+    --heatpos:#ec5f57; --heatneg:#4b8fe0;
+    --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:ui-sans-serif,system-ui,"Segoe UI",Roboto,sans-serif;
+  }
+  @media (prefers-color-scheme:light){
+    :root{ --bg:#eaeef3; --panel:#ffffff; --panel2:#f4f7fa; --line:#dbe2ea;
+      --text:#161d28; --muted:#5a6879; --faint:#93a0b0; --grid:rgba(20,30,45,.07);
+      --bf16:#63728a; --fb:#159c82; --e5m2:#c98a1f; --wop2:#d6453c;
+      --heatpos:#d6453c; --heatneg:#3a7bd0; }
+  }
+  :root[data-theme="dark"]{ --bg:#0d1014; --panel:#141922; --panel2:#1b2230; --line:#26313f;
+    --text:#e7edf4; --muted:#8b98a9; --faint:#5d6879; --grid:rgba(255,255,255,.055);
+    --bf16:#7d8ba0; --fb:#34c0a4; --e5m2:#eab04a; --wop2:#ec5f57; --heatpos:#ec5f57; --heatneg:#4b8fe0; }
+  :root[data-theme="light"]{ --bg:#eaeef3; --panel:#ffffff; --panel2:#f4f7fa; --line:#dbe2ea;
+    --text:#161d28; --muted:#5a6879; --faint:#93a0b0; --grid:rgba(20,30,45,.07);
+    --bf16:#63728a; --fb:#159c82; --e5m2:#c98a1f; --wop2:#d6453c; --heatpos:#d6453c; --heatneg:#3a7bd0; }
+
+  *{box-sizing:border-box}
+  body{background:var(--bg);color:var(--text);font-family:var(--sans);
+    line-height:1.55;-webkit-font-smoothing:antialiased;margin:0;
+    background-image:radial-gradient(circle at 15% -10%,rgba(52,192,164,.06),transparent 40%),
+      radial-gradient(circle at 100% 0%,rgba(236,95,87,.05),transparent 35%);}
+  .wrap{max-width:1080px;margin:0 auto;padding:clamp(20px,4vw,52px) clamp(16px,3.5vw,40px) 80px;}
+
+  /* header */
+  .eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.22em;text-transform:uppercase;
+    color:var(--fb);display:flex;gap:10px;align-items:center;}
+  .eyebrow::before{content:"";width:26px;height:1px;background:var(--fb);opacity:.7}
+  h1{font-size:clamp(27px,4.6vw,44px);line-height:1.08;letter-spacing:-.02em;font-weight:760;
+    margin:.5rem 0 .35rem;text-wrap:balance;}
+  h1 em{font-style:normal;color:var(--wop2)}
+  .thesis{color:var(--muted);max-width:64ch;font-size:15.5px;margin:0}
+  .thesis b{color:var(--text);font-weight:640}
+
+  /* legend */
+  .legend{display:flex;flex-wrap:wrap;gap:8px;margin:22px 0 4px}
+  .chip{font-family:var(--mono);font-size:12px;display:flex;align-items:center;gap:7px;
+    background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:6px 11px}
+  .swatch{width:20px;height:3px;border-radius:2px;flex:none}
+  .chip small{color:var(--faint);font-size:10.5px}
+
+  /* verdict cards */
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:14px;margin:26px 0 8px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 17px;position:relative;overflow:hidden}
+  .card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--c,var(--line))}
+  .card .k{font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+  .card .v{font-size:26px;font-weight:720;letter-spacing:-.02em;margin:.28rem 0 .1rem;font-variant-numeric:tabular-nums}
+  .card .d{font-size:12.5px;color:var(--muted)}
+  .card .d b{color:var(--text)}
+  .tag{font-family:var(--mono);font-size:10.5px;padding:2px 7px;border-radius:20px;font-weight:600;letter-spacing:.03em}
+  .tag.ok{color:var(--fb);background:color-mix(in srgb,var(--fb) 16%,transparent)}
+  .tag.bad{color:var(--wop2);background:color-mix(in srgb,var(--wop2) 16%,transparent)}
+
+  /* section */
+  section{margin-top:44px}
+  .shead{display:flex;align-items:baseline;gap:12px;margin-bottom:4px}
+  .snum{font-family:var(--mono);font-size:12px;color:var(--fb);font-weight:600}
+  h2{font-size:20px;letter-spacing:-.015em;font-weight:680;margin:0}
+  .sdesc{color:var(--muted);font-size:14px;margin:.35rem 0 18px;max-width:70ch}
+  .sdesc code{font-family:var(--mono);font-size:12.5px;background:var(--panel2);padding:1px 6px;border-radius:5px;color:var(--text)}
+
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 18px 12px}
+  .ptitle{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:6px;flex-wrap:wrap}
+  .ptitle .name{font-family:var(--mono);font-size:13px;color:var(--text)}
+  .ptitle .sub{font-size:12px;color:var(--faint)}
+  .chartgrid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:720px){.chartgrid{grid-template-columns:1fr}}
+  svg{display:block;width:100%;height:auto;overflow:visible}
+  .axlab{fill:var(--faint);font-family:var(--mono);font-size:10px}
+  .gridline{stroke:var(--grid)}
+  .axis{stroke:var(--line)}
+
+  /* heatmap */
+  .heatwrap{overflow-x:auto}
+  table.heat{border-collapse:separate;border-spacing:2px;font-family:var(--mono);min-width:520px;width:100%}
+  table.heat th{font-size:10.5px;color:var(--muted);font-weight:500;padding:3px 4px;text-align:center;white-space:nowrap}
+  table.heat th.rowh{text-align:right;color:var(--text);font-size:11.5px;padding-right:9px}
+  table.heat td{text-align:center;font-size:11px;font-variant-numeric:tabular-nums;
+    border-radius:4px;padding:5px 2px;min-width:44px;color:#0d1014;font-weight:600}
+  table.heat td.na{background:var(--panel2)!important;color:var(--faint)}
+  .heatnote{font-size:12px;color:var(--muted);margin:12px 2px 0;display:flex;gap:16px;flex-wrap:wrap;align-items:center}
+  .scalebar{height:9px;width:120px;border-radius:5px;
+    background:linear-gradient(90deg,var(--heatneg),var(--panel2) 50%,var(--heatpos));display:inline-block;vertical-align:middle}
+
+  /* family bars */
+  .fam{display:flex;flex-direction:column;gap:11px;margin-top:4px}
+  .famrow{display:grid;grid-template-columns:150px 1fr;gap:12px;align-items:center}
+  @media(max-width:560px){.famrow{grid-template-columns:110px 1fr}}
+  .famname{font-family:var(--mono);font-size:12px;color:var(--text);text-align:right}
+  .fambars{display:flex;flex-direction:column;gap:3px}
+  .bartrack{position:relative;height:15px;background:var(--panel2);border-radius:4px;overflow:hidden}
+  .barzero{position:absolute;top:0;bottom:0;width:1px;background:var(--faint);opacity:.5}
+  .barfill{position:absolute;top:0;bottom:0;border-radius:3px}
+  .barval{position:absolute;top:0;height:15px;line-height:15px;font-family:var(--mono);font-size:9.5px;color:var(--muted);padding:0 4px}
+
+  /* mechanism / recommend */
+  .mech{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:6px}
+  @media(max-width:720px){.mech{grid-template-columns:1fr}}
+  .mcard{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:17px 18px}
+  .mcard h3{font-size:14.5px;margin:0 0 8px;letter-spacing:-.01em;display:flex;align-items:center;gap:8px}
+  .mcard h3 .dot{width:8px;height:8px;border-radius:50%;flex:none}
+  .mcard p{margin:0 0 9px;font-size:13.5px;color:var(--muted)}
+  .mcard p b{color:var(--text);font-weight:620}
+  .mcard code{font-family:var(--mono);font-size:12px;background:var(--panel2);padding:1px 5px;border-radius:4px;color:var(--text)}
+  .flow{font-family:var(--mono);font-size:12px;color:var(--muted);background:var(--panel2);border:1px solid var(--line);
+    border-radius:8px;padding:11px 13px;line-height:1.9;margin-top:4px}
+  .flow b{color:var(--e5m2)}
+
+  .rec{background:linear-gradient(180deg,color-mix(in srgb,var(--fb) 8%,var(--panel)),var(--panel));
+    border:1px solid color-mix(in srgb,var(--fb) 30%,var(--line));border-radius:14px;padding:20px 22px;margin-top:20px}
+  .rec ol{margin:10px 0 0;padding-left:20px}
+  .rec li{margin-bottom:9px;font-size:14px}
+  .rec li b{font-weight:660}
+  .verdict-pill{display:inline-block;font-family:var(--mono);font-size:11px;padding:2px 9px;border-radius:20px;margin-left:2px;font-weight:600}
+  .vp-safe{color:var(--fb);background:color-mix(in srgb,var(--fb) 15%,transparent)}
+  .vp-warn{color:var(--e5m2);background:color-mix(in srgb,var(--e5m2) 15%,transparent)}
+  .vp-crit{color:var(--wop2);background:color-mix(in srgb,var(--wop2) 15%,transparent)}
+
+  footer{margin-top:40px;padding-top:18px;border-top:1px solid var(--line);
+    font-family:var(--mono);font-size:11px;color:var(--faint);display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}
+
+  /* architecture / containment */
+  .contain{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;gap:12px;align-items:stretch;margin:2px 0 18px}
+  @media(max-width:640px){.contain{grid-template-columns:1fr}}
+  .cstep{background:var(--panel2);border:1px solid var(--line);border-radius:11px;padding:13px 15px;display:flex;flex-direction:column;gap:2px;justify-content:center}
+  .cstep .cl{font-family:var(--mono);font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
+  .cstep .cv{font-size:23px;font-weight:730;letter-spacing:-.02em;font-variant-numeric:tabular-nums;line-height:1.1}
+  .cstep .cd{font-size:11.5px;color:var(--faint)}
+  .carrow{display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:11px;color:var(--fb);white-space:nowrap;font-weight:600}
+  @media(max-width:640px){.carrow{transform:rotate(90deg);height:14px}}
+  .cstep.good{border-color:color-mix(in srgb,var(--fb) 40%,var(--line))}
+  .cstep.bad{border-color:color-mix(in srgb,var(--wop2) 45%,var(--line))}
+  .cstep.bad .cv{color:var(--wop2)}
+  .cstep.good .cv{color:var(--fb)}
+  .branchtag{font-family:var(--mono);font-size:10.5px;padding:2px 8px;border-radius:5px;font-weight:600;letter-spacing:.02em}
+  .bt-post{color:var(--fb);background:color-mix(in srgb,var(--fb) 15%,transparent)}
+  .bt-pre{color:var(--wop2);background:color-mix(in srgb,var(--wop2) 15%,transparent)}
+  .note{font-size:12.5px;color:var(--muted);margin:2px 2px 0;padding:9px 12px;background:var(--panel2);border-left:2px solid var(--fb);border-radius:0 7px 7px 0}
+  .note b{color:var(--text)}
+</style>
+
+<div class="wrap">
+  <div class="eyebrow">ALGO-FP8 · 激活数值诊断</div>
+  <h1>不是 FP8 的锅，是 <em>MoE 分支没有 post-norm</em> 接住它</h1>
+  <p class="thesis">四个 0.25B run 的 loss / 评测几乎重合，但末层 MoE 激活在 E5M2 反向下单调放飞。根因不是 FP8 本身——
+    <b>MoE 分支只有 pre-norm，被放大的激活直进残差、无人接管</b>。同模型的稠密首层带 post-norm，在完全相同的 FP8 放大下纹丝不动——正好是内建对照。</p>
+
+  <div class="legend" id="legend"></div>
+
+  <div class="cards">
+    <div class="card" style="--c:var(--bf16)"><div class="k">训练 loss 差</div>
+      <div class="v">±0.004</div><div class="d">nats vs 基线 · <span class="tag ok">四者对齐</span></div></div>
+    <div class="card" style="--c:var(--bf16)"><div class="k">下游评测差 @20k</div>
+      <div class="v">±0.4</div><div class="d">15 任务均值 46.3–46.7 · <span class="tag ok">噪声内</span></div></div>
+    <div class="card" style="--c:var(--fb)"><div class="k">首层 dense · 有 post-norm</div>
+      <div class="v">÷87</div><div class="d">raw 28.8 → 残差前 0.33 · <span class="tag ok">被容纳</span></div></div>
+    <div class="card" style="--c:var(--wop2)"><div class="k">末层 MoE · 无 post-norm</div>
+      <div class="v">4.6×</div><div class="d">ffn_out 0.50 → <b>2.32</b> 且在涨 · <span class="tag bad">放飞</span></div></div>
+  </div>
+
+  <section>
+    <div class="shead"><span class="snum">01</span><h2>现象：末层 MoE 激活随训练放飞</h2></div>
+    <p class="sdesc">最后一层（L18 = MoE 层17）的 <code>ffn_out</code>（expert 输出）与 <code>residual_mlp_out</code>（残差流），每 1000 步取均值。
+      <span style="color:var(--fb)">FB-E4M3</span> 全程贴着 <span style="color:var(--bf16)">BF16</span>；两个 E5M2 反向配方一路爬升并剧烈抖动——单调漂移，不是固定偏置。</p>
+    <div class="chartgrid">
+      <div class="panel">
+        <div class="ptitle"><span class="name">rms/ffn_out/layer_18</span><span class="sub">末层 MoE expert 输出</span></div>
+        <div id="c_ffn"></div>
+      </div>
+      <div class="panel">
+        <div class="ptitle"><span class="name">rms/residual_mlp_out/layer_18</span><span class="sub">末层残差流</span></div>
+        <div id="c_res"></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="shead"><span class="snum">02</span><h2>根因：<code style="font-size:.85em">post_mlp_layernorm</code> 的有无 — 同模型 A/B</h2></div>
+    <p class="sdesc">架构是混合 norm：<b>稠密首层（层0）</b> 是 sandwich，MLP 输出后压着 <span class="branchtag bt-post">post_mlp_LN</span>；
+      <b>MoE 层（1–17）</b> 只有 pre_mlp_LN，expert 输出 <span class="branchtag bt-pre">直进残差</span>。两端的原始激活都被 FP8/E5M2 放大 ~2×，
+      差别只在有没有 post-norm 接住它。</p>
+
+    <div class="contain">
+      <div class="cstep"><span class="cl">首层 dense · raw MLP 输出</span><span class="cv">28.8</span><span class="cd">FP8 放大 2.0× (BF16=14.3)</span></div>
+      <div class="carrow">post_mlp_LN&nbsp;▶</div>
+      <div class="cstep good"><span class="cl">进残差前</span><span class="cv">0.33</span><span class="cd">压缩 ÷87 · 四 run 一致</span></div>
+      <div class="carrow">结果&nbsp;▶</div>
+      <div class="cstep good"><span class="cl">残差贡献</span><span class="cv">+30%</span><span class="cd">有界稳定偏置</span></div>
+    </div>
+    <div class="contain">
+      <div class="cstep"><span class="cl">末层 MoE · expert 输出</span><span class="cv">—</span><span class="cd">无 post-norm</span></div>
+      <div class="carrow" style="color:var(--wop2)">直进残差&nbsp;▶</div>
+      <div class="cstep bad"><span class="cl">残差贡献 ffn_out</span><span class="cv">4.6×</span><span class="cd">0.50 → 2.32 且单调涨</span></div>
+      <div class="carrow" style="color:var(--wop2)">→</div>
+      <div class="cstep bad"><span class="cl">谁来接</span><span class="cv">仅 final_LN</span><span class="cd">见 §03</span></div>
+    </div>
+
+    <div class="chartgrid" style="margin-top:6px">
+      <div class="panel">
+        <div class="ptitle"><span class="name">首层 dense 残差贡献 <span class="branchtag bt-post">post-norm</span></span><span class="sub">residual_mlp_out/L1</span></div>
+        <div id="c_denseR"></div>
+      </div>
+      <div class="panel">
+        <div class="ptitle"><span class="name">末层 MoE 残差贡献 <span class="branchtag bt-pre">no post-norm</span></span><span class="sub">ffn_out/L18</span></div>
+        <div id="c_moe"></div>
+      </div>
+    </div>
+    <div class="note">唯一变量是 <b>post_mlp_layernorm 的有无</b>。注意力分支（所有层都有 <code>post_self_attention_layernorm</code>）同样受控——末层注意力输出 0.61→0.81（+32%，有界），不放飞。<b>约束一条分支的就是它有没有 post-norm。</b></div>
+  </section>
+
+  <section>
+    <div class="shead"><span class="snum">03</span><h2>为什么 loss 看不见：final_layernorm 全吸收</h2></div>
+    <p class="sdesc">末层残差在 FP8 里涨到 2–3×，但送进 unembedding 前的 <code>final_layernorm_out</code>
+      <b>四个 run 全程钉在 ~1.28</b>——放飞被 loss 前唯一的归一化点完全吃掉。这是 loss/评测无感的机械原因，与 per-层 norm 摆放无关。</p>
+    <div class="panel" style="max-width:560px">
+      <div class="ptitle"><span class="name">rms/final_layernorm_out</span><span class="sub">送 unembedding 前 · loss 前唯一吸收点</span></div>
+      <div id="c_final"></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="shead"><span class="snum">04</span><h2>逐层热力图：两端两种红，别混为一谈</h2></div>
+    <p class="sdesc">FP8 相对 BF16 偏差%，逐层 × 配方 @ step≈19000。
+      <b>L1（稠密首层）</b>的 +26~45% 是 <span style="color:var(--fb)">被 post-norm 收住的稳定偏置</span>；
+      <b>L18（末层 MoE）</b>的 +76~355% 是 <span style="color:var(--wop2)">无 post-norm 的失控漂移</span>。中间 15 层只在个位数抖动。</p>
+    <div class="panel">
+      <div class="ptitle"><span class="name" id="heattitle">rms/residual_mlp_out</span>
+        <span class="sub"><button id="ht_res" class="htbtn">residual_mlp_out</button> · <button id="ht_ffn" class="htbtn">ffn_out</button></span></div>
+      <div class="heatwrap"><div id="heat"></div></div>
+      <div class="heatnote">
+        <span>偏差% vs BF16</span>
+        <span><span class="scalebar"></span></span>
+        <span style="font-family:var(--mono);font-size:11px">−100&nbsp;····&nbsp;0&nbsp;····&nbsp;+100%（色标按 √ 压缩，标注为真值）</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="shead"><span class="snum">05</span><h2>机制拆解</h2></div>
+    <div class="mech">
+      <div class="mcard">
+        <h3><span class="dot" style="background:var(--wop2)"></span>放飞 = 结构许可 × 驱动力 × 位置</h3>
+        <p><b>结构许可</b>：MoE 分支无 post-norm，expert 输出直进残差，幅度不受约束（注意力/稠密首层有 post-norm，就压得住）。</p>
+        <p><b>驱动力</b>：E5M2 只有 2 位尾数（误差 ~25% vs E4M3 的 ~12%），反向梯度粗量化推着末层 expert 权重单调长大；去 <code>power-of-2</code> 多一次舍入 → WOPOWER2 最凶。</p>
+        <p><b>位置</b>：末层输出只喂 final_LN、无下游，自由度拉满 → 漂移集中在 L18。</p>
+        <div class="flow">无 post-norm &nbsp;×&nbsp; <b>E5M2 粗梯度</b> &nbsp;×&nbsp; 末端位置 &nbsp;→&nbsp; 离群正反馈</div>
+      </div>
+      <div class="mcard">
+        <h3><span class="dot" style="background:var(--fb)"></span>E5M2 反向：per-tensor 的遗产，blockwise 下反转</h3>
+        <p>「E4M3 前向 + E5M2 反向」出自 2022 <b>per-tensor</b> 方案：梯度动态范围宽，需 E5M2 的 5 位指数防溢出。</p>
+        <p>但这里是 <b>128-blockwise</b>：动态范围已由 per-block scale 解决，E5M2 的指数冗余、2 位尾数成净损失。DeepSeek-V3 在细粒度 FP8 下<b>前后向全用 E4M3</b>——数据符合的是这个现代结论。</p>
+        <div class="flow">blockwise scale 罩住范围 &nbsp;→&nbsp; E5M2 指数无用 &nbsp;→&nbsp; <b>只剩尾数劣势</b> &nbsp;→&nbsp; 用 E4M3</div>
+      </div>
+    </div>
+  </section>
+
+  <div class="rec">
+    <div class="shead" style="margin-bottom:2px"><span class="snum">→</span><h2>结论与建议</h2></div>
+    <p style="color:var(--muted);font-size:13.5px;margin:.4rem 0 0">实测质量四者打平（loss ±0.004、评测 ±0.4）。但 E5M2 两个配方末层激活<b style="color:var(--text)">仍单调上升</b>；一旦某 block 峰值顶到 E4M3 前向上限（~448），block-max scale 被它主导、同 block 其余元素量化到近零 → 触发真正发散。两条修复正交，可叠加：</p>
+    <ol>
+      <li><b>架构（治本）：给 MoE 分支加 post_mlp_layernorm</b> <span class="verdict-pill vp-safe">FIX</span> 与稠密首层、注意力分支对齐。同模型已证明：相同 FP8 放大下，有 post-norm 就压得住。对 BF16 也只有稳定收益。</li>
+      <li><b>格式：blockwise 用 FB-E4M3（全 E4M3）</b> <span class="verdict-pill vp-safe">SAFE</span> DeepSeek-V3 正解；E5M2-bwd 是 per-tensor 遗产，此处只带来更糙的梯度。</li>
+      <li><b>不建议 WOPOWER2</b> <span class="verdict-pill vp-crit">RISK</span> E5M2 + 去 2 幂，离群最重（+355%），潜伏的发散定时炸弹。</li>
+    </ol>
+    <p style="color:var(--muted);font-size:12.5px;margin:12px 0 0">下一个 ablation：F/B-E5M2 只给 MoE 加 <code style="font-family:var(--mono)">post_mlp_layernorm</code>，看末层 ffn_out 是否从 2.3 收回 ~0.5——一次同时验证放飞机制与修复手段。</p>
+  </div>
+
+  <footer>
+    <span>来源 · SwanLab zmye/ALGO-FP8 · 219 个 rms 探针 · step≈19–20.5k</span>
+    <span>A0.25B · 128-blockwise FP8</span>
+  </footer>
+</div>
+
+<style>.htbtn{font-family:var(--mono);font-size:12px;background:none;border:none;color:var(--faint);cursor:pointer;padding:2px 4px;border-radius:4px}
+.htbtn.on{color:var(--fb);background:color-mix(in srgb,var(--fb) 14%,transparent)}</style>
+
+<script>
+const DATA = {"runs": ["bf16_baseline", "fb_e4m3", "f_e4m3_b_e5m2", "wopower2"], "mids": [500, 1500, 2500, 3500, 4500, 5500, 6500, 7500, 8500, 9500, 10500, 11500, 12500, 13500, 14500, 15500, 16500, 17500, 18500, 19500, 20500], "ts": {"rms/ffn_out/layer_18": {"bf16_baseline": [0.0787, 0.2801, 0.3684, 0.3943, 0.3999, 0.4066, 0.4232, 0.4311, 0.444, 0.4474, 0.4584, 0.4653, 0.4697, 0.4738, 0.4897, 0.4942, 0.4885, 0.4999, 0.5006, 0.4967, 0.509], "fb_e4m3": [0.0773, 0.2773, 0.3599, 0.3731, 0.3754, 0.3894, 0.4057, 0.4338, 0.4266, 0.4349, 0.4667, 0.464, 0.464, 0.4773, 0.5026, 0.5018, 0.4969, 0.507, 0.5044, 0.5113, 0.5343], "f_e4m3_b_e5m2": [0.0784, 0.2919, 0.4038, 0.5079, 0.6919, 0.8986, 1.0699, 1.5206, 1.5573, 1.9074, 2.2066, 2.0258, 1.8542, 1.4512, 1.4951, 1.8152, 2.0444, 2.138, 1.9655, 2.0355, 2.2547], "wopower2": [0.0784, 0.2922, 0.3961, 0.4348, 0.5515, 0.5695, 0.647, 0.8001, 0.846, 0.996, 1.3414, 1.1748, 1.591, 2.1455, 1.7102, 1.5783, 1.5256, 2.217, 3.1165, 1.6809, 3.0432]}, "rms/residual_mlp_out/layer_18": {"bf16_baseline": [1.0053, 1.1167, 1.2372, 1.3196, 1.3651, 1.4014, 1.4279, 1.4503, 1.4691, 1.4825, 1.495, 1.51, 1.5193, 1.5233, 1.5421, 1.5463, 1.5462, 1.558, 1.5623, 1.5613, 1.5729], "fb_e4m3": [0.9971, 1.1016, 1.2335, 1.3393, 1.401, 1.4464, 1.475, 1.5106, 1.5236, 1.538, 1.5742, 1.583, 1.5954, 1.6115, 1.6357, 1.6435, 1.6569, 1.6708, 1.6697, 1.6805, 1.6939], "f_e4m3_b_e5m2": [0.9977, 1.1064, 1.2554, 1.3904, 1.5501, 1.721, 1.857, 2.2106, 2.2715, 2.5816, 2.8609, 2.7011, 2.6212, 2.3087, 2.3704, 2.6322, 2.8235, 2.9223, 2.7946, 2.8748, 3.0441], "wopower2": [0.9972, 1.1068, 1.2528, 1.3779, 1.503, 1.5607, 1.6284, 1.7453, 1.8024, 1.9133, 2.1871, 2.1305, 2.4502, 2.8974, 2.6259, 2.4855, 2.4713, 3.0313, 3.784, 2.62, 3.7477]}}, "heat_resid": {"layers": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18], "rows": {"fb_e4m3": [26.4, 10.2, 10.3, 5.6, 4.1, 6.0, 5.9, 6.6, 1.4, 7.7, 5.0, 6.1, 1.0, 10.0, 9.6, 1.5, -0.6, 7.3], "f_e4m3_b_e5m2": [45.2, 9.7, 3.6, 0.8, 1.5, 5.8, 5.8, 8.4, 1.1, 7.3, 4.5, 5.8, 2.8, 9.8, 8.9, -2.2, -2.6, 76.5], "wopower2": [29.3, 9.3, 9.2, 5.3, 5.1, 5.2, 5.7, 7.0, 0.4, 7.2, 2.7, 6.0, 1.6, 10.0, 8.9, -0.4, 1.7, 98.4]}}, "heat_ffn": {"layers": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18], "rows": {"fb_e4m3": [42.2, -11.7, -12.0, -13.2, -9.5, -7.2, -5.6, -5.1, -7.8, -4.4, 16.9, -8.6, -22.8, 0.7, 1.6, 0.4, 35.5, 2.0], "f_e4m3_b_e5m2": [51.2, 36.6, -11.3, -12.8, -9.2, -6.7, -6.8, -8.7, -3.6, -2.0, -1.6, -9.0, -22.7, -0.4, -4.6, 10.3, 18.7, 280.4], "wopower2": [35.2, -15.2, -11.6, -13.8, -3.2, -6.7, -7.7, 8.6, -9.0, -1.2, 2.5, -9.1, -21.1, 0.2, -6.3, 6.2, 76.8, 355.1]}}, "fambar": [{"name": "attn out", "dev": {"fb_e4m3": 7.8, "f_e4m3_b_e5m2": 10.0, "wopower2": 9.6}}, {"name": "ffn out (down-proj)", "dev": {"fb_e4m3": -2.2, "f_e4m3_b_e5m2": 20.2, "wopower2": 26.4}}, {"name": "residual attn", "dev": {"fb_e4m3": 8.0, "f_e4m3_b_e5m2": 8.1, "wopower2": 9.1}}, {"name": "residual mlp", "dev": {"fb_e4m3": 6.2, "f_e4m3_b_e5m2": 10.5, "wopower2": 12.7}}, {"name": "LN out \u2192 MLP", "dev": {"fb_e4m3": -17.5, "f_e4m3_b_e5m2": -16.0, "wopower2": -16.5}}, {"name": "residual (pre-LN)", "dev": {"fb_e4m3": 8.0, "f_e4m3_b_e5m2": 8.1, "wopower2": 9.1}}], "dense_raw": {"bf16_baseline": [0.2841, 0.4536, 1.1939, 3.0984, 4.5841, 5.5639, 6.9486, 7.7021, 8.2698, 8.8696, 8.8295, 9.2378, 10.0134, 10.8468, 11.5428, 12.2308, 13.1449, 13.5469, 14.0487, 14.4649, 15.013], "fb_e4m3": [0.2913, 0.6057, 3.783, 5.6307, 7.7554, 10.1526, 12.522, 14.9536, 15.9388, 17.5041, 20.356, 21.525, 23.7866, 23.3234, 22.9146, 24.7534, 25.6424, 24.7966, 24.4438, 25.8504, 25.7546], "f_e4m3_b_e5m2": [0.2927, 0.5846, 3.9862, 7.2079, 8.359, 9.1741, 12.8088, 14.0503, 17.9808, 22.0934, 18.3148, 18.2433, 17.0866, 19.4825, 16.1266, 18.1142, 17.9065, 17.5051, 19.2876, 18.3913, 27.2064], "wopower2": [0.2927, 0.6086, 4.1001, 5.6441, 7.8663, 11.0953, 14.126, 17.6794, 19.2837, 22.3803, 23.6254, 23.8094, 25.033, 26.7603, 26.2846, 26.6058, 29.1699, 28.0193, 28.9258, 28.7577, 27.6974]}, "dense_out": {"bf16_baseline": [0.1683, 0.1666, 0.1588, 0.1509, 0.1475, 0.1491, 0.1538, 0.1596, 0.166, 0.1722, 0.1799, 0.1872, 0.1942, 0.2021, 0.2089, 0.2168, 0.2231, 0.2317, 0.239, 0.2459, 0.2527], "fb_e4m3": [0.1687, 0.1685, 0.1987, 0.2314, 0.2466, 0.2558, 0.2614, 0.2673, 0.2736, 0.276, 0.2794, 0.286, 0.2937, 0.2975, 0.3046, 0.308, 0.3266, 0.3326, 0.3429, 0.3492, 0.3697], "f_e4m3_b_e5m2": [0.1687, 0.1685, 0.1916, 0.2223, 0.2385, 0.2469, 0.2505, 0.2607, 0.2665, 0.2723, 0.2872, 0.3035, 0.3201, 0.3189, 0.3308, 0.3303, 0.3525, 0.3605, 0.3696, 0.3645, 0.357], "wopower2": [0.1687, 0.1685, 0.1937, 0.2232, 0.2383, 0.2449, 0.25, 0.2553, 0.2626, 0.2663, 0.2685, 0.2748, 0.283, 0.2854, 0.2926, 0.2969, 0.3116, 0.3155, 0.326, 0.3314, 0.349]}, "dense_resid": {"bf16_baseline": [0.2382, 0.219, 0.2176, 0.2164, 0.2201, 0.2289, 0.2407, 0.254, 0.2666, 0.2785, 0.2924, 0.3047, 0.317, 0.3297, 0.3397, 0.3508, 0.3598, 0.3723, 0.3833, 0.3932, 0.4023], "fb_e4m3": [0.2398, 0.2367, 0.2544, 0.281, 0.3005, 0.3185, 0.332, 0.3477, 0.3635, 0.3733, 0.38, 0.3975, 0.4106, 0.4197, 0.432, 0.4401, 0.4634, 0.473, 0.4874, 0.4959, 0.5179], "f_e4m3_b_e5m2": [0.2397, 0.237, 0.2495, 0.2768, 0.2993, 0.3147, 0.3263, 0.3447, 0.3579, 0.3803, 0.4134, 0.4382, 0.4631, 0.4713, 0.488, 0.4972, 0.532, 0.5464, 0.5627, 0.5654, 0.5707], "wopower2": [0.2397, 0.2373, 0.2527, 0.2788, 0.3002, 0.3177, 0.3328, 0.3492, 0.3671, 0.3785, 0.3886, 0.403, 0.4188, 0.4278, 0.4429, 0.4524, 0.4715, 0.4826, 0.4988, 0.5069, 0.5272]}, "final_ln": {"bf16_baseline": [1.062, 1.2769, 1.3305, 1.3276, 1.3222, 1.3221, 1.3267, 1.328, 1.3374, 1.3382, 1.3464, 1.337, 1.3527, 1.3578, 1.3675, 1.3769, 1.3931, 1.3941, 1.4017, 1.4043, 1.4039], "fb_e4m3": [1.0617, 1.2737, 1.3161, 1.2788, 1.2399, 1.2169, 1.2106, 1.2078, 1.2076, 1.2169, 1.2225, 1.2284, 1.2319, 1.2427, 1.2532, 1.2638, 1.2616, 1.2695, 1.2775, 1.285, 1.2905], "f_e4m3_b_e5m2": [1.0616, 1.2739, 1.321, 1.298, 1.2538, 1.2297, 1.2193, 1.2127, 1.209, 1.2101, 1.2129, 1.2165, 1.2211, 1.237, 1.2456, 1.2607, 1.2612, 1.2718, 1.2791, 1.2846, 1.2848], "wopower2": [1.0618, 1.2738, 1.3193, 1.2876, 1.2544, 1.2372, 1.2303, 1.2213, 1.2173, 1.2207, 1.2247, 1.2249, 1.2292, 1.2396, 1.2471, 1.2598, 1.2559, 1.2657, 1.2714, 1.2803, 1.2808]}, "attn_branch": {"bf16_baseline": [0.1695, 0.1732, 0.2167, 0.2819, 0.3233, 0.3539, 0.3788, 0.403, 0.4249, 0.4473, 0.4647, 0.4834, 0.502, 0.5188, 0.5364, 0.5539, 0.5704, 0.5877, 0.6045, 0.6183, 0.6355], "fb_e4m3": [0.1698, 0.174, 0.2196, 0.2955, 0.3453, 0.3792, 0.4071, 0.4349, 0.4606, 0.4858, 0.5116, 0.5352, 0.5589, 0.5788, 0.5993, 0.6189, 0.6421, 0.6586, 0.6744, 0.6917, 0.7102], "f_e4m3_b_e5m2": [0.1698, 0.1741, 0.2211, 0.2986, 0.3581, 0.3977, 0.4327, 0.4652, 0.4981, 0.5299, 0.5611, 0.5917, 0.6183, 0.6465, 0.6768, 0.7055, 0.7319, 0.7626, 0.7908, 0.8172, 0.8461], "wopower2": [0.1698, 0.1741, 0.2207, 0.2956, 0.3492, 0.3887, 0.4249, 0.4615, 0.4952, 0.5272, 0.5592, 0.5925, 0.6238, 0.6545, 0.6839, 0.7113, 0.7423, 0.7699, 0.7972, 0.824, 0.8513]}};
+const RUN = {
+  bf16_baseline:{label:"BF16 基线", note:"全精度参照", c:"var(--bf16)", dash:true},
+  fb_e4m3:{label:"FB-E4M3", note:"前后向 E4M3", c:"var(--fb)"},
+  f_e4m3_b_e5m2:{label:"F/B-E5M2", note:"反向 E5M2", c:"var(--e5m2)"},
+  wopower2:{label:"WOPOWER2", note:"E5M2 · 无 2幂", c:"var(--wop2)"},
+};
+const cssv = v => v.startsWith("var(") ? getComputedStyle(document.documentElement).getPropertyValue(v.slice(4,-1)).trim() : v;
+
+// legend
+document.getElementById("legend").innerHTML = Object.entries(RUN).map(([k,r])=>
+  `<span class="chip"><span class="swatch" style="background:${r.c};${r.dash?'background:repeating-linear-gradient(90deg,'+r.c+' 0 5px,transparent 5px 9px)':''}"></span>${r.label} <small>${r.note}</small></span>`).join("");
+
+// ---- line chart ----
+function lineChart(el, series, ydom, opts){
+  opts=opts||{}; const dec=opts.dec==null?1:opts.dec;
+  const W=440,H=250, m={l:opts.dec===2?46:40,r:12,t:12,b:30};
+  const iw=W-m.l-m.r, ih=H-m.t-m.b;
+  const xs = DATA.mids, xmax=Math.max(...xs), xmin=0;
+  const [y0,y1]=ydom;
+  const X=v=>m.l+(v-xmin)/(xmax-xmin)*iw;
+  const Y=v=>m.t+ih-(Math.max(y0,Math.min(y1,v))-y0)/(y1-y0)*ih;
+  let g=`<svg viewBox="0 0 ${W} ${H}" role="img">`;
+  // y grid + labels
+  const yticks=4;
+  for(let i=0;i<=yticks;i++){ const v=y0+(y1-y0)*i/yticks, y=Y(v);
+    g+=`<line class="gridline" x1="${m.l}" x2="${W-m.r}" y1="${y}" y2="${y}"/>`;
+    g+=`<text class="axlab" x="${m.l-6}" y="${y+3}" text-anchor="end">${v.toFixed(dec)}</text>`; }
+  // x labels
+  [0,5000,10000,15000,20000].forEach(t=>{ const x=X(t);
+    g+=`<line class="axis" x1="${x}" x2="${x}" y1="${m.t+ih}" y2="${m.t+ih+4}"/>`;
+    g+=`<text class="axlab" x="${x}" y="${H-8}" text-anchor="middle">${t/1000}k</text>`; });
+  // lines
+  for(const rk of DATA.runs){
+    const ser=series[rk]; if(!ser) continue; const col=cssv(RUN[rk].c);
+    let d="",started=false,last=-1;
+    ser.forEach((v,i)=>{ if(v==null)return; const cmd=started?"L":"M"; d+=`${cmd}${X(xs[i]).toFixed(1)} ${Y(v).toFixed(1)} `; started=true; last=i;});
+    const dash = RUN[rk].dash? 'stroke-dasharray="5 4"':'';
+    g+=`<path d="${d}" fill="none" stroke="${col}" stroke-width="${RUN[rk].dash?1.6:2}" ${dash} stroke-linejoin="round" opacity="${RUN[rk].dash?.85:.95}"/>`;
+    if(last>=0) g+=`<circle cx="${X(xs[last])}" cy="${Y(ser[last])}" r="2.6" fill="${col}"/>`;
+  }
+  g+=`</svg>`;
+  el.innerHTML=g;
+}
+function drawAll(){
+  lineChart(document.getElementById("c_ffn"),DATA.ts["rms/ffn_out/layer_18"],[0,3.3]);
+  lineChart(document.getElementById("c_res"),DATA.ts["rms/residual_mlp_out/layer_18"],[0.8,3.9]);
+  lineChart(document.getElementById("c_denseR"),DATA.dense_resid,[0,0.7]);
+  lineChart(document.getElementById("c_moe"),DATA.ts["rms/ffn_out/layer_18"],[0,3.3]);
+  lineChart(document.getElementById("c_final"),DATA.final_ln,[1.0,1.5],{dec:2});
+}
+drawAll();
+
+// ---- heatmap ----
+function heatColor(v){
+  if(v==null) return null;
+  const cap=100, t=Math.max(-1,Math.min(1, Math.sign(v)*Math.sqrt(Math.abs(v)/cap)));
+  const pos=cssv("--heatpos"), neg=cssv("--heatneg"), mid=cssv("--panel2");
+  const hex=h=>[1,3,5].map(i=>parseInt(h.slice(i,i+2),16));
+  const mix=(a,b,f)=>a.map((x,i)=>Math.round(x+(b[i]-x)*f));
+  const M=hex(mid.replace('#','#')), P=hex(pos), N=hex(neg);
+  const c = t>=0? mix(M,P,t) : mix(M,N,-t);
+  const lum = .299*c[0]+.587*c[1]+.114*c[2];
+  return {bg:`rgb(${c[0]},${c[1]},${c[2]})`, fg: lum>140?'#0d1014':'#f2f5f8', strong:Math.abs(t)>.55};
+}
+function renderHeat(which){
+  const H = which==="ffn"? DATA.heat_ffn : DATA.heat_resid;
+  const runs=["fb_e4m3","f_e4m3_b_e5m2","wopower2"];
+  let t=`<table class="heat"><thead><tr><th class="rowh">配方 \\ 层</th>`;
+  H.layers.forEach(L=>t+=`<th>L${L}</th>`); t+=`</tr></thead><tbody>`;
+  for(const rk of runs){ t+=`<tr><th class="rowh" style="color:${cssv(RUN[rk].c)}">${RUN[rk].label}</th>`;
+    H.rows[rk].forEach(v=>{ if(v==null){t+=`<td class="na">—</td>`;return;}
+      const c=heatColor(v);
+      t+=`<td style="background:${c.bg};color:${c.fg};${c.strong?'font-weight:700;box-shadow:inset 0 0 0 1px rgba(255,255,255,.25)':''}">${v>0?'+':''}${v>=100||v<=-100?Math.round(v):v.toFixed(0)}</td>`; });
+    t+=`</tr>`; }
+  t+=`</tbody></table>`;
+  document.getElementById("heat").innerHTML=t;
+  document.getElementById("heattitle").textContent = "rms/"+(which==="ffn"?"ffn_out":"residual_mlp_out");
+  document.getElementById("ht_res").classList.toggle("on",which==="res");
+  document.getElementById("ht_ffn").classList.toggle("on",which==="ffn");
+}
+document.getElementById("ht_res").onclick=()=>renderHeat("res");
+document.getElementById("ht_ffn").onclick=()=>renderHeat("ffn");
+renderHeat("res");
+
+// re-render on theme toggle (colors are token-based)
+const mo=new MutationObserver(()=>{
+  drawAll();
+  renderHeat(document.getElementById("ht_ffn").classList.contains("on")?"ffn":"res");
+});
+mo.observe(document.documentElement,{attributes:true,attributeFilter:["data-theme"]});
+</script>
