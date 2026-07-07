@@ -229,74 +229,12 @@ def cmd_list(cfg, args):
     print("-" * 100)
 
 
-import re
-
-# 日志里两种时间戳：训练器行内 `[2026-07-07 05:30:44.908]`（判前进用这个）、
-# 采集头 `time=2026-07-07T05:30:44.977+08:00`。同集群各 pod 时区一致，统一归一成
-# `YYYY-MM-DD HH:MM:SS`（定宽同区）后按字符串比较即等于按时间比较，无需解析 datetime。
-_TS_RES = (
-    re.compile(r"\[(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})"),   # 训练器方括号
-    re.compile(r"time=(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})"),  # 采集头 time=
-)
-
-
-def _latest_ts_in_lines(lines):
-    """从一段日志行里提取最新（最大）的归一化时间戳字符串，无则 None。"""
-    best = None
-    for ln in lines:
-        for rx in _TS_RES:
-            for m in rx.finditer(ln or ""):
-                s = f"{m.group(1)} {m.group(2)}"
-                if best is None or s > best:
-                    best = s
-    return best
-
-
-def _pod_latest_ts(dlc, dlc_models, job_id, pod_id, probe_lines=20):
-    """探测单个 pod 尾部，返回其最新一行的归一化时间戳（无则 None）。"""
-    try:
-        req = dlc_models.GetPodLogsRequest(max_lines=probe_lines)
-        logs = dlc.get_pod_logs(job_id, pod_id, req).body.logs or []
-    except Exception:
-        return None
-    return _latest_ts_in_lines(logs)
-
-
-def _freshest_pod(dlc, dlc_models, job_id, pods):
-    """在所有 worker pod 里挑「日志时间戳最新」的那个（探测尾部各取几行比较）。
-
-    绕开「固定取 worker 序号最大 pod」常读到陈旧缓存日志导致误判 HANG 的问题。
-    只探测 Worker 型 pod（训练 iteration 打在 worker 上；master 只做协调）；
-    Worker 型为空则退回全部 pod。全部探测失败返回 None，调用方自行回退。
-    探测并发进行——大任务上百 pod 时顺序探测会超时（如 6144 卡任务）。
-    """
-    from concurrent.futures import ThreadPoolExecutor
-
-    workers = [p for p in pods if "worker" in (p.type or "").lower()] or pods
-
-    def probe(p):
-        return p, _pod_latest_ts(dlc, dlc_models, job_id, p.pod_id)
-
-    best, best_ts = None, None
-    with ThreadPoolExecutor(max_workers=min(16, len(workers) or 1)) as ex:
-        for p, ts in ex.map(probe, workers):
-            if ts is not None and (best_ts is None or ts > best_ts):
-                best, best_ts = p, ts
-    return best
-
-
 def cmd_logs(cfg, args):
     dlc, dlc_models, mk = _clients(cfg)
     job = dlc.get_job(args.job_id, dlc_models.GetJobRequest()).body
     pods = job.pods or []
     if not pods:
         raise SystemExit(f"任务 {args.job_id} 没有 pod（可能未开始或已释放）。")
-
-    # “最后一个节点”：按 worker 数字序号最大者（回退按启动时间）
-    def worker_idx(p):
-        pid = p.pod_id or ""
-        tail = pid.rsplit("-", 1)[-1]
-        return int(tail) if tail.isdigit() else -1
 
     if args.pod:
         cand = [p for p in pods if args.pod in (p.pod_id or "")]
@@ -305,11 +243,13 @@ def cmd_logs(cfg, args):
                 f"没有匹配 '{args.pod}' 的 pod。现有：{[p.pod_id for p in pods]}"
             )
         pod = cand[0]
-    elif getattr(args, "fresh", False):
-        pod = _freshest_pod(dlc, dlc_models, args.job_id, pods) or max(
-            pods, key=lambda p: (worker_idx(p), p.gmt_start_time or "")
-        )
     else:
+        # “最后一个节点”：按 worker 数字序号最大者（回退按启动时间）
+        def worker_idx(p):
+            pid = p.pod_id or ""
+            tail = pid.rsplit("-", 1)[-1]
+            return int(tail) if tail.isdigit() else -1
+
         pod = max(pods, key=lambda p: (worker_idx(p), p.gmt_start_time or ""))
 
     req = dlc_models.GetPodLogsRequest(max_lines=args.lines)
@@ -400,12 +340,6 @@ def parse_args():
     p.add_argument("job_id")
     p.add_argument("--lines", type=int, default=50, help="尾部行数，默认 50")
     p.add_argument("--pod", default=None, help="指定 pod（子串匹配，如 worker-3）")
-    p.add_argument(
-        "--fresh",
-        action="store_true",
-        help="自动挑「日志最新」的 worker pod（探测各 pod 尾部时间戳取最近者），"
-        "绕开固定取 worker 序号最大 pod 常读到陈旧缓存的问题",
-    )
 
     add_json(sub.add_parser("workspaces", help="列可访问的工作空间"))
 
