@@ -6,7 +6,7 @@
 
 | 命令 | 说明 |
 |------|------|
-| `/arxiv` | 筛选今日 arxiv 上 LLM 基模和训练系统相关论文 |
+| `/arxiv` | 筛选今日 arxiv 上 LLM 基模、训练系统和大模型安全相关论文 |
 | `/paper sync\|ask\|status` | Zotero 论文库同步 + PaperQA2 语义问答（带引用）|
 | `/github [language]` | GitHub 每日热门仓库，支持按语言筛选 |
 | `/zhihu` | 知乎当前热榜话题 |
