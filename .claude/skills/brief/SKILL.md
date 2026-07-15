@@ -1,8 +1,9 @@
 ---
 name: brief
 description: 每日简报，并行调用 arxiv / HF Papers / 知乎 / HN / GitHub / Product Hunt
+argument-hint: "[信息源...]"
 user-invocable: true
-allowed-tools: AskUserQuestion, Agent, mcp__siyuan__list_notebooks, mcp__siyuan__create_doc
+allowed-tools: AskUserQuestion, Agent, Bash, Write, mcp__siyuan__list_notebooks, mcp__siyuan__create_doc
 ---
 
 # 每日简报
@@ -13,19 +14,24 @@ allowed-tools: AskUserQuestion, Agent, mcp__siyuan__list_notebooks, mcp__siyuan_
 
 ## 执行步骤
 
-### 第一步：确定信息源
+### 第一步：确定信息源 + 是否推送飞书
 
-**若调用时带了参数**（如 `/brief arxiv 知乎`，`$ARGUMENTS` 非空），直接按参数匹配下表选定信息源，跳过提问。
+**若调用时带了参数**（如 `/brief arxiv 知乎`，`$ARGUMENTS` 非空），直接按参数匹配下表选定信息源，跳过提问；
+此时**不推送飞书**（除非用户在参数里明确说要推）。
 
-**未带参数时**，用 `AskUserQuestion` 工具询问用户本次简报要包含哪些信息源。
+**未带参数时**，用 `AskUserQuestion` 工具**一次性问三题**（`questions` 传三个元素，会在同一弹窗里并列展示）询问信息源与飞书开关。
 
-> ⚠️ `AskUserQuestion` **每个问题最多 4 个选项**，6 个源塞不进一题。所以**拆成两个分类问题**
-> 一次性问（`AskUserQuestion` 的 `questions` 传两个元素，会在同一弹窗里并列展示），**两题都 `multiSelect: true`**：
+> ⚠️ `AskUserQuestion` **每个问题最多 4 个选项**，6 个源塞不进一题。所以信息源**拆成两个分类问题**，
+> 再加一题飞书开关，共三题：
 >
-> - **第 1 题「学术论文类」**（`header: 论文源`）：`arxiv`、`HF Papers`
-> - **第 2 题「社区热榜类」**（`header: 热榜源`）：`知乎`、`Hacker News`、`GitHub`、`Product Hunt`
+> - **第 1 题「学术论文类」**（`header: 论文源`，`multiSelect: true`）：`arxiv`、`HF Papers`
+> - **第 2 题「社区热榜类」**（`header: 热榜源`，`multiSelect: true`）：`知乎`、`Hacker News`、`GitHub`、`Product Hunt`
+> - **第 3 题「推送飞书」**（`header: 飞书`，`multiSelect: false`）：`否`（默认，不推）、`是`（推到飞书群，需现场输入 KEY）
 >
-> 两题合并即为全部 6 个源，用户可跨题任意勾选。
+> 前两题合并即为全部 6 个源，用户可跨题任意勾选。第 3 题选「是」则第五步推送飞书，选「否」或跳过则不推。
+
+**第 3 题选「是」时，紧接着让用户输入飞书 webhook 的 KEY**：用一句话请用户把 KEY（`hook/` 之后那串，
+如 `1b64311b-...`）发过来。**KEY 每次现输，不读配置、不落盘、不写进思源**；用户不给 KEY 就当作不推。
 
 | 选项 | 对应 skill | 分类 |
 |------|-----------|------|
@@ -64,6 +70,24 @@ allowed-tools: AskUserQuestion, Agent, mcp__siyuan__list_notebooks, mcp__siyuan_
    - `notebook`: navi 的笔记本 ID
    - `path`: `/daily/{yyyy-mm-dd}` （当天日期）
    - `markdown`: 第二步汇总的完整简报内容
+
+### 第五步：推送飞书（仅当第 3 题选「是」且拿到 KEY 时）
+
+**只有第一步第 3 题选了「是」并拿到用户现输的 KEY 才做这步**，选「否」/跳过/没给 KEY/带参数直调都不推，不报错。
+
+**KEY 必须用第一步现输的那个，通过 `--key` 传入；绝不读配置 `[feishu].key`。**
+把第三步汇总的完整简报写进 JSON 文件（用 `Write` 工具，避免换行/标题在命令行里被截断），
+再用 `Bash` 调 `feishu` skill 的 `push.py` 以 markdown 卡片推送：
+
+```bash
+python3 .claude/skills/feishu/push.py --key <用户现输的KEY> --data /tmp/brief-feishu.json
+```
+
+JSON 内容：`{ "title": "每日简报 — {yyyy-mm-dd}", "content": "<第三步的完整简报正文>" }`。
+飞书卡片正文按 lark_md 渲染，**保持完整内容不截断**。
+
+读脚本输出判断结果：成功回「✅ 已推送飞书」；失败把错误码原样转达
+（常见：签名校验 19021 / 自定义关键词未命中 19024 / KEY 错误），不阻塞其他输出。
 
 ## 注意事项
 
