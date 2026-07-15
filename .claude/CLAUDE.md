@@ -13,7 +13,7 @@
 | `/hfpapers` | Hugging Face Daily Papers 今日热门论文 |
 | `/hackernews` | Hacker News 当前热门帖子 |
 | `/producthunt` | Product Hunt 今日热门产品 |
-| `/brief` | 每日简报，聚合以上所有信息源 |
+| `/brief` | 每日简报，聚合以上所有信息源；可选一并推送飞书群（无参数时弹窗询问）|
 | `/swanlab-analyze [实验]` | 分析 SwanLab 训练实验，自动挖掘指标关系并诊断 |
 | `/swanlab-monitor [实验]` | 实时监控运行中的训练实验，研判异常并告警（配 `/loop`） |
 | `/server add\|list\|remove` | 管理远程服务器清单（名字/IP/登录方式）|
