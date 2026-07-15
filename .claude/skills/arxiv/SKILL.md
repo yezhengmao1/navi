@@ -1,8 +1,8 @@
 ---
 name: arxiv
-description: 获取今日 arxiv 论文，筛选大语言模型基模和训练系统相关论文
+description: 获取今日 arxiv 论文，筛选大语言模型基模、训练系统和大模型安全相关论文
 user-invocable: true
-allowed-tools: WebFetch
+allowed-tools: Bash, Read
 context: fork
 ---
 
@@ -10,27 +10,32 @@ context: fork
 
 ## 任务
 
-从 arxiv 获取今日新论文，筛选出与 **大语言模型基模** 和 **训练系统** 相关的论文，并以结构化格式呈现。
+从 arxiv 获取今日新论文，筛选出与 **大语言模型基模**、**训练系统** 和 **大模型安全** 相关的论文，并以结构化格式呈现。
 
 ## 数据获取
 
-### 第一步：尝试 RSS
+用 `fetch.py` 取数，**不要用 WebFetch**——WebFetch 抓 RSS 只返回前 ~50 条就截断，
+而当日 feed 常有 500+ 条，会漏掉绝大多数论文。
 
-使用 WebFetch 抓取：
-```
-https://rss.arxiv.org/rss/cs.AI+cs.CL+cs.LG+cs.CE+cs.DB+cs.DC+cs.MA+cs.OS+cs.SY
-```
-
-提取所有 `<item>` 中的 title、link、dc:creator（作者）、description（摘要）。
-
-### 第二步：如果 RSS 为空则回退到 API
-
-RSS 在周末/假期可能为空。此时使用 WebFetch 抓取 arxiv API：
-```
-https://export.arxiv.org/api/query?search_query=cat:cs.AI+OR+cat:cs.CL+OR+cat:cs.LG+OR+cat:cs.DC+OR+cat:cs.DB&sortBy=submittedDate&sortOrder=descending&max_results=50
+```bash
+python3 .claude/skills/arxiv/fetch.py > /tmp/arxiv-today.json
 ```
 
-从 Atom XML 中提取 title、id（URL）、author、summary。
+脚本自取 RSS 全量（`rss.arxiv.org`，cs.AI+cs.CL+cs.LG+cs.CE+cs.DB+cs.DC+cs.MA+cs.OS+cs.SY），
+周末/假期 RSS 为空时自动回退 arxiv API。输出 JSON：
+
+| 字段 | 说明 |
+|------|------|
+| `source` | `rss` 或 `api`（回退时） |
+| `feed_date` | feed 的 pubDate，**输出时如实报告**（arxiv 通常凌晨才滚动，早上跑可能仍是昨天的） |
+| `total_fetched` | 抓到的原始条目数 |
+| `announced_today` | 剔除 `replace` 后的当日新公告数 |
+| `papers[]` | `title` / `link` / `authors` / `abstract` / `announce_type`（`new` 或 `cross`） |
+
+脚本默认剔除 `replace` / `replace-cross`（旧论文的更新，非今日新公告）；需要保留时加 `--keep-replace`。
+
+**筛选在 JSON 上做**：用 Read 读取该文件，按下面的筛选规则逐条判断。条目数多（数百条），
+逐条读标题与摘要，不要因为量大而只看前若干条。
 
 ## arXiv 分类代码
 
@@ -56,11 +61,15 @@ https://export.arxiv.org/api/query?search_query=cat:cs.AI+OR+cat:cs.CL+OR+cat:cs
 **训练系统（Training Systems）**：
 - 关键词：training system, distributed training, parallel training, data parallel, model parallel, pipeline parallel, tensor parallel, training infrastructure, training efficiency, GPU cluster, training framework, DeepSpeed, Megatron, FSDP, checkpointing, mixed precision, gradient compression, communication optimization, training at scale
 
-筛选时综合考虑标题和摘要内容，不要仅做简单关键词匹配——理解论文的实际主题。
+**大模型安全（LLM Safety & Security）**：
+- 关键词：jailbreak, prompt injection, adversarial attack, red teaming, alignment, RLHF, safety alignment, refusal, guardrail, safety filter, model extraction, membership inference, distillation detection, data poisoning, backdoor, watermarking, hallucination, privacy leakage, memorization, unlearning, interpretability for safety, CoT faithfulness, monitorability, deception, agent safety, tool-use safety, sandbox escape
+- 判断依据是**攻击/防御/评测的对象是不是大模型（含 agent）**：针对 LLM/agent 的 → 收；传统软件漏洞、通用密码学、与模型无关的网络安全 → 不收。
+
+筛选时综合考虑标题和摘要内容，不要仅做简单关键词匹配——理解论文的实际主题。注意 alignment / RLHF 类论文只在其**动机是安全性**（无害、拒答、防操纵）时算安全方向；纯粹为提升任务能力的后训练归基模类。
 
 ### 主列表 vs 相关系统方向
 
-上面两类命中的论文进**主列表**。此外还有一类**通用训练/系统方向**的论文：
+上面三类命中的论文进**主列表**。此外还有一类**通用训练/系统方向**的论文：
 
 - 涉及 checkpointing / 分布式与并行计算 / 容错（fault tolerance）/ 通信优化 / HPC 系统等系统关键词，
 - 但**并非面向大语言模型训练**（如通用 HPC 数据流容错、给 MPI 程序自动加检查点、抗静默数据损坏的任务复制等）。
@@ -100,6 +109,7 @@ https://export.arxiv.org/api/query?search_query=cat:cs.AI+OR+cat:cs.CL+OR+cat:cs
 ## 注意事项
 
 - 所有非论文原文的内容用中文输出
-- 在开头注明数据来源（RSS 还是 API）和获取到的论文总数
+- 在开头注明数据来源（`source`）、`feed_date`、以及「抓取 N 条 → 剔除 replace 后当日新公告 M 篇」
+- `feed_date` 若不是今天（arxiv 尚未滚动），如实说明这批是哪天的，不要写成今天的
 - 如果筛选后没有相关论文，明确告知用户
 - 如果今天完全没有新论文（周末），告知用户 arxiv 周末不更新，并展示最近提交的相关论文
