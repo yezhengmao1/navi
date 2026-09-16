@@ -19,6 +19,7 @@ import os
 import re
 import shutil
 import sys
+from importlib.metadata import PackageNotFoundError, version as package_version
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config  # noqa: E402
@@ -30,6 +31,52 @@ from paperqa.agents.search import get_directory_index  # noqa: E402
 _FNAME_RE = re.compile(r"^(.*?)\s*-\s*(\d{4})\s*-\s*(.*)$")
 # 列顺序：year 放最后，缺失时整列省略 → DictReader 读成 None（空串会被 DocDetails 当 int 解析而报错）
 _MANIFEST_COLS = ["file_location", "title", "authors", "journal", "doi", "key", "year"]
+
+
+def _install_lmi_select_tool_compat() -> None:
+    """Bridge the fhlmi callback to fhaviary's model-name binding.
+
+    fhlmi <= 1.0.5 defines a keyword-only completion closure, while fhaviary
+    0.34/0.35 binds model_name as its first positional argument. This only
+    affects fake-agent finalization and is removed once either side moves
+    beyond the known-broken version range.
+    """
+    try:
+        from packaging.version import Version
+
+        lmi_version = Version(package_version("fhlmi"))
+        aviary_version = Version(package_version("fhaviary"))
+    except (PackageNotFoundError, ValueError):
+        return
+    if not (
+        Version("0.48.0") <= lmi_version <= Version("1.0.5")
+        and Version("0.34.0") <= aviary_version <= Version("0.35.0")
+    ):
+        return
+
+    import litellm
+    from aviary.core import ToolSelector
+    from lmi import LiteLLMModel
+    from lmi.cost_tracker import track_costs
+
+    if getattr(LiteLLMModel.select_tool, "_navi_compat", False):
+        return
+
+    async def select_tool(self, *selection_args, **selection_kwargs):
+        primary = self.llm_config.models[0]
+
+        async def completion(_bound_model_name=None, **kwargs):
+            return await litellm.acompletion(
+                **primary.to_litellm_kwargs(), **kwargs
+            )
+
+        selector = ToolSelector(
+            model_name=self.name, acompletion=track_costs(completion)
+        )
+        return await selector(*selection_args, **selection_kwargs)
+
+    select_tool._navi_compat = True
+    LiteLLMModel.select_tool = select_tool
 
 
 def _cite_key(text: str) -> str:
@@ -125,13 +172,21 @@ async def cmd_ask(cfg, question=None):
     if not cfg["pdf_dir"].exists() or not any(cfg["pdf_dir"].glob("*.pdf")):
         print("cache 里还没有 PDF，请先运行：paper sync")
         return
+    _install_lmi_select_tool_compat()
     settings = config.paperqa_settings(cfg)
 
     async def answer(q, attempts=3):
         last = None
         for i in range(attempts):
             try:
-                resp = await agent_query(query=q, settings=settings)
+                # agent_query has its own import-time default and does not read
+                # settings.agent.agent_type. Pass it explicitly so our configured
+                # deterministic "fake" agent is actually used.
+                resp = await agent_query(
+                    query=q,
+                    settings=settings,
+                    agent_type=settings.agent.agent_type,
+                )
                 return _answer_text(resp)
             except Exception as e:  # noqa: BLE001
                 last = e

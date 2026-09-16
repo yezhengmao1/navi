@@ -36,7 +36,9 @@ python3 .agents/skills/feishu/push.py --key <KEY> --content report.md
 echo "# 正文" | python3 .agents/skills/feishu/push.py --key <KEY> --content -
 ```
 
-带标题 → 自动升级为 interactive 卡片（正文按 lark_md 渲染 markdown：加粗、列表、链接等）：
+带标题 → 自动升级为 interactive 卡片（正文按 lark_md 渲染 markdown：加粗、列表、链接等）。
+脚本会把 lark_md 不支持、容易原样显示的 `#` / `##` / `###` 标题自动转换为加粗分区标题；
+代码围栏内的 `#` 保持不变：
 
 ```bash
 python3 .agents/skills/feishu/push.py --key <KEY> --title "每日简报" --content report.md

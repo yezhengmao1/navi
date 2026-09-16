@@ -1,0 +1,18 @@
+id = "navi.btc-status"
+name = "Bitcoin Price & Clock"
+version = "0.2.0"
+min_herdr_version = "0.8.2"
+description = "Coinbase BTC/USD price, 24h change, 30m sparkline, Alternative.me fear/greed index, and clock. Requires Python 3.11+."
+platforms = ["linux", "macos"]
+
+[[actions]]
+id = "configure"
+title = "Enable BTC price and clock in tab bar"
+contexts = ["workspace"]
+command = ["python3", "configure.py"]
+
+[[actions]]
+id = "refresh"
+title = "Refresh Bitcoin price cache"
+contexts = ["workspace"]
+command = ["python3", "btc_status.py", "--refresh"]

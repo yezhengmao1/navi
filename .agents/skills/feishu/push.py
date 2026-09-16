@@ -35,6 +35,7 @@ JSON 文件字段（缺省项会补默认）：
 import argparse
 import json
 import os
+import re
 import sys
 import urllib.request
 import urllib.error
@@ -47,6 +48,11 @@ except ModuleNotFoundError:  # py<3.11
 
 CONFIG_PATH = Path("~/.navi/config.toml").expanduser()
 DEFAULT_BASE = "https://open.feishu.cn/open-apis/bot/v2/hook/"
+
+ATX_HEADING_RE = re.compile(
+    r"^(?P<indent>[ \t]{0,3})#{1,6}[ \t]+(?P<title>.*?)(?:[ \t]+#+)?[ \t]*$"
+)
+FENCE_RE = re.compile(r"^[ \t]*(?P<fence>`{3,}|~{3,})")
 
 
 def load_cfg() -> dict:
@@ -89,12 +95,50 @@ def read_task(args) -> dict:
     return task
 
 
+def normalize_lark_md(content: str) -> str:
+    """把 lark_md 不支持的 ATX 标题转为加粗分区标题。
+
+    飞书卡片的 lark_md 只支持 Markdown 子集，`##` / `###` 等标题常会
+    原样显示。代码围栏内的内容必须保持不变。
+    """
+    rendered: list[str] = []
+    active_fence: tuple[str, int] | None = None
+
+    for line in content.splitlines():
+        fence_match = FENCE_RE.match(line)
+        if fence_match:
+            fence = fence_match.group("fence")
+            marker = fence[0]
+            if active_fence is None:
+                active_fence = (marker, len(fence))
+            elif marker == active_fence[0] and len(fence) >= active_fence[1]:
+                active_fence = None
+            rendered.append(line)
+            continue
+
+        if active_fence is None:
+            heading_match = ATX_HEADING_RE.match(line)
+            if heading_match:
+                title = heading_match.group("title").strip()
+                if title and not (title.startswith("**") and title.endswith("**")):
+                    title = f"**{title}**"
+                line = f"{heading_match.group('indent')}{title}"
+
+        rendered.append(line)
+
+    normalized = "\n".join(rendered)
+    if content.endswith("\n"):
+        normalized += "\n"
+    return normalized
+
+
 def build_payload(task: dict) -> dict:
     """有 title → interactive 卡片（正文按 lark_md 渲染 markdown）；否则纯文本。"""
     content = task["content"]
     title = task.get("title")
     if not title:
         return {"msg_type": "text", "content": {"text": content}}
+    content = normalize_lark_md(content)
     return {
         "msg_type": "interactive",
         "card": {
