@@ -5,4 +5,5 @@
 node_modules/
 __pycache__/
 *.pyc
-/scripts/
+/scripts/*
+!/scripts/test_pi_resources.mjs

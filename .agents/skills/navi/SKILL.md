@@ -36,10 +36,10 @@ python3 .agents/skills/navi/navi.py pull
 python3 .agents/skills/navi/navi.py status
 ```
 
-## 作为 `/navi` 被调用时
+## 作为 `/skill:navi` 被调用时
 
 `用户请求` 第一个词是子命令（`sync` / `pull` / `status`），缺省按 `sync` 处理：
-1. 用 `Bash` 跑 `python3 "<本 skill 的 base directory>/navi.py" <子命令> [--delete] [--dry-run]`——**用调用时给出的 base directory 拼绝对路径**，别用相对 cwd 的路径（cwd 可能不在仓库根）。
+1. 用 `bash` 跑 `python3 "<本 skill 的 base directory>/navi.py" <子命令> [--delete] [--dry-run]`——**用调用时给出的 base directory 拼绝对路径**，别用相对 cwd 的路径（cwd 可能不在仓库根）。
 2. 把返回的 JSON 用**中文小结**：传/拉/删了几个文件、跳过几个、目标 URL；`failures` 非空时原样转述并提示怎么改。
 3. `--delete` 会删目标端文件，**执行前先跟用户确认**；不确定影响范围时先 `--dry-run` 或 `status`。
 4. 若报缺少配置，提示在 `[navi]` 段补齐 `webdav_url` / `webdav_user` / `webdav_password`。

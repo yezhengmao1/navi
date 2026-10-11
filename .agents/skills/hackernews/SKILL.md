@@ -13,7 +13,7 @@ description: 获取 Hacker News 当前热门帖子
 
 ### 第一步：获取热门帖子 ID 列表
 
-使用 Codex 网页工具 抓取 top stories：
+使用 `bash` 运行 `curl -fL --max-time 60` 或 Python urllib 抓取 top stories，保存 JSON 后解析：
 
 ```
 https://hacker-news.firebaseio.com/v0/topstories.json
@@ -23,7 +23,7 @@ https://hacker-news.firebaseio.com/v0/topstories.json
 
 ### 第二步：批量获取帖子详情
 
-对每个 ID，用 Codex 网页工具 抓取详情：
+对每个 ID，用 `bash` 运行 curl 或 Python urllib 抓取详情（可限流并发），用 `read` 读取保存的结果：
 
 ```
 https://hacker-news.firebaseio.com/v0/item/{id}.json

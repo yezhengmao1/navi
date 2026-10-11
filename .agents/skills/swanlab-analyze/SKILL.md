@@ -5,7 +5,7 @@ description: 分析 SwanLab 上的大模型训练实验——主打挖掘「变�
 
 # SwanLab 训练实验分析
 
-从 SwanLab 读取训练实验的原始指标，**主打挖掘「变量之间的关系」**——哪些指标互相牵动、强度多大、谁领先谁、什么机制、真耦合还是伪相关。一次性深度关系分析；健康判断/告警/调参建议属于 `/swanlab-monitor`，本 skill 不做结论评级。
+从 SwanLab 读取训练实验的原始指标，**主打挖掘「变量之间的关系」**——哪些指标互相牵动、强度多大、谁领先谁、什么机制、真耦合还是伪相关。一次性深度关系分析；健康判断/告警/调参建议属于 `/skill:swanlab-monitor`，本 skill 不做结论评级。
 
 设计原则（务必遵守）：
 - **最小职责**：取数全部走 `swanlab/tools/` 下的单一功能脚本（一个脚本只干一件事）；本 skill 只编排，分析交给 `swanlab-analyst` agent。
@@ -23,8 +23,8 @@ description: 分析 SwanLab 上的大模型训练实验——主打挖掘「变�
 - 参数是 `run_id` 或完整 `user/project/run_id` → 用之（缺 user/project 用配置默认）。
 - 参数是实验名 → 在默认/指定项目内 `list_experiments.py` 找同名 run。
 - **参数为空**：
-  - 配置有默认 `project` → `list_experiments.py --project <默认>` 列出来；多个用 `Codex 用户输入工具` 选，单个直接用。
-  - 无默认 project → 先 `list_projects.py` 列项目（可看 `count.runningExps` 找在跑的），`Codex 用户输入工具` 选项目再列实验。
+  - 配置有默认 `project` → `list_experiments.py --project <默认>` 列出来；多个时在对话中列出选项并等待用户选择，单个直接用。
+  - 无默认 project → 先 `list_projects.py` 列项目（可看 `count.runningExps` 找在跑的），在对话中请用户选项目再列实验。
 
 ## 第二步：读指标说明
 
@@ -46,11 +46,11 @@ python3 .agents/skills/swanlab/tools/get_metrics.py --path <path> --keys <核心
 ```
 （`--all` 取全分辨率；步数过大也可省略走采样。）
 
-## 第五步：交给 analyst 挖掘关系 + 诊断
+## 第五步：交给 analyst 挖掘关系
 
-用 Codex 子 agent `swanlab-analyst`启动，prompt 给出：实验 `path` 与元信息、CSV 路径、指标说明文件路径，任务=「**主打挖掘变量之间的关系**：level 与去趋势相关、领先滞后、同步变点、结构/族内耦合；区分真耦合与伪相关，每条给证据；产出关系图谱，不要健康评级与建议」。需要时用 tools/ 深挖指标族。
+用 `subagent` 工具，参数 `agent: "swanlab-analyst"`、`agentScope: "project"`、`cwd` 为仓库根。`task` 给出：实验 `path` 与元信息、CSV 路径、指标说明文件路径，任务=「**主打挖掘变量之间的关系**：level 与去趋势相关、领先滞后、同步变点、结构/族内耦合；区分真耦合与伪相关，每条给证据；产出关系图谱，不要健康评级与建议」。需要时用 tools/ 深挖指标族。
 
-> 多实验对比：每个实验各起一个 analyst（并行），再由本 skill 汇总对比。
+> 多实验对比：使用 `subagent.tasks` 为每个实验派一个 analyst，再汇总对比。CSV、指标说明和工具目录均传绝对路径。若未加载扩展，用 `read` 读取 `.pi/agents/swanlab-analyst.md`，在当前会话依其流程分析，不声称已启动子 agent。
 
 ## 第六步：输出
 

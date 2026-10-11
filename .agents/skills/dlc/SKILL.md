@@ -46,10 +46,10 @@ python3 .agents/skills/dlc/dlc.py logs <jobid> --pod worker-3   # 指定 pod
 python3 .agents/skills/dlc/dlc.py workspaces
 ```
 
-## 作为 `/dlc` 被调用时
+## 作为 `/skill:dlc` 被调用时
 
 `用户请求` 第一个词是子命令（`list` / `logs` / `workspaces`），缺省按 `list` 处理：
-1. 用 `Bash` 跑 `python3 "<本 skill 的 base directory>/dlc.py" <子命令> [选项]`——
+1. 用 `bash` 跑 `python3 "<本 skill 的 base directory>/dlc.py" <子命令> [选项]`——
    **用调用时给出的 base directory 拼绝对路径**，别用相对 cwd 的路径（cwd 可能不在仓库根）。
 2. `list`：把结果整理成中文表格（GPU / 已运行 / 状态 / 工作空间 / 属主 / 任务名），
    并给出**合计卡数**与「我 vs 他人」的粗略拆分（属主等于你自己的即为「我的」）。

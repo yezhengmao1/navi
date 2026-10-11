@@ -13,18 +13,14 @@ description: 获取 GitHub 每日热门仓库摘要，支持按语言筛选
 
 ### 第一步：读取 token
 
-用 Bash 读取 `~/.navi/config.toml` 中 `[github]` 段的 `token`：
-
-```bash
-python3 -c "import tomllib; print(tomllib.load(open('$HOME/.navi/config.toml','rb'))['github']['token'])"
-```
+用 `bash` 运行 Python，在进程内读取 `~/.navi/config.toml` 的 `[github].token`（可选）。不要打印 token，不把凭证带到输出、报告或子 agent prompt。配置不存在时使用公开接口。
 
 ### 第二步：抓取 trending 仓库列表
 
-如果 token 不为空，用 curl 抓取 GitHub trending 页面，用正则提取所有 `Box-row` 中的仓库名：
+trending 是公开页面，用 curl 抓取，再用正则提取仓库名。把 `<language>` 替换为用户指定语言的 URL 编码；未指定时留空：
 
 ```bash
-curl -s -H "Authorization: token $TOKEN" "https://github.com/trending/用户请求" | python3 -c "
+curl -fL --max-time 60 "https://github.com/trending/<language>" | python3 -c "
 import sys, re
 content = sys.stdin.read()
 pattern = r'<h2[^>]*>\s*<a[^>]*href=\"/([^\"]+)\"'
@@ -35,15 +31,13 @@ for r in repos:
 "
 ```
 
-如果 token 为空，回退到 Codex 网页工具 抓取 `https://github.com/trending/用户请求`。
+抓取失败时如实报告，不编造榜单。
 
 ### 第三步：批量获取仓库详情
 
 对每个仓库调用 GitHub API 获取 stars、forks、description：
 
-```bash
-curl -s -H "Authorization: token $TOKEN" "https://api.github.com/repos/<owner>/<repo>"
-```
+用 Python urllib 请求 `https://api.github.com/repos/<owner>/<repo>`；若配置了 token，在进程内加 `Authorization: Bearer <token>` 请求头，否则匿名请求。设置超时，遇限流时注明，禁止输出请求头。
 
 从 JSON 中提取 `full_name`、`stargazers_count`、`forks_count`、`description`。
 

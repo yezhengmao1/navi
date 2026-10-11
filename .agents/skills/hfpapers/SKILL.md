@@ -11,7 +11,7 @@ description: 获取 Hugging Face Daily Papers 今日热门论文
 
 ## 数据获取
 
-使用 Codex 网页工具 抓取 API：
+使用 `bash` 运行 `curl -fL --max-time 60` 或 Python urllib 抓取以下 API，保存 JSON 后解析并用 `read` 读取：
 
 ```
 https://huggingface.co/api/daily_papers?date={YYYY-MM-DD}&sort=trending

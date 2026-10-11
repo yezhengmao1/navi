@@ -1,18 +1,18 @@
 ---
 name: arxiv
-description: 获取今日 arxiv 论文，筛选大语言模型基模、训练系统和大模型安全相关论文
+description: 获取今日 arxiv 论文，筛选大语言模型基模和训练系统相关论文
 ---
 
 # arxiv 今日论文筛选
 
 ## 任务
 
-从 arxiv 获取今日新论文，筛选出与 **大语言模型基模**、**训练系统** 和 **大模型安全** 相关的论文，并以结构化格式呈现。
+从 arxiv 获取今日新论文，筛选出与 **大语言模型基模** 和 **训练系统** 相关的论文，并以结构化格式呈现。
 
 ## 数据获取
 
-用 `fetch.py` 取数，**不要用 Codex 网页工具**——Codex 网页工具 抓 RSS 只返回前 ~50 条就截断，
-而当日 feed 常有 500+ 条，会漏掉绝大多数论文。
+用 `bash` 运行 `fetch.py` 取数，**不要依赖网页工具的截断预览**。当日 feed 常有 500+ 条，
+只看预览会漏掉绝大多数论文；必须把完整 RSS 解析结果落盘后分页读取。
 
 ```bash
 python3 .agents/skills/arxiv/fetch.py > /tmp/arxiv-today.json
@@ -31,7 +31,7 @@ python3 .agents/skills/arxiv/fetch.py > /tmp/arxiv-today.json
 
 脚本默认剔除 `replace` / `replace-cross`（旧论文的更新，非今日新公告）；需要保留时加 `--keep-replace`。
 
-**筛选在 JSON 上做**：用 Read 读取该文件，按下面的筛选规则逐条判断。条目数多（数百条），
+**筛选在 JSON 上做**：用 `read` 分页读取该文件，按下面的筛选规则逐条判断。条目数多（数百条），
 逐条读标题与摘要，不要因为量大而只看前若干条。
 
 ## arXiv 分类代码
@@ -53,20 +53,17 @@ python3 .agents/skills/arxiv/fetch.py > /tmp/arxiv-today.json
 从所有获取到的论文中，筛选与以下主题相关的论文：
 
 **大语言模型基模（LLM Foundation Models）**：
-- 关键词：LLM, large language model, foundation model, language modeling, pretraining, pre-training, scaling law, tokenization, architecture (transformer variants), mixture of experts, MoE, long context, multimodal foundation
+- 关键词：LLM, large language model, foundation model, language modeling, pretraining, pre-training, scaling law, tokenization, architecture (transformer variants), mixture of experts, MoE, long context
+- 包含以提升任务能力为动机的后训练（如 alignment / RLHF）。
 
 **训练系统（Training Systems）**：
 - 关键词：training system, distributed training, parallel training, data parallel, model parallel, pipeline parallel, tensor parallel, training infrastructure, training efficiency, GPU cluster, training framework, DeepSpeed, Megatron, FSDP, checkpointing, mixed precision, gradient compression, communication optimization, training at scale
 
-**大模型安全（LLM Safety & Security）**：
-- 关键词：jailbreak, prompt injection, adversarial attack, red teaming, alignment, RLHF, safety alignment, refusal, guardrail, safety filter, model extraction, membership inference, distillation detection, data poisoning, backdoor, watermarking, hallucination, privacy leakage, memorization, unlearning, interpretability for safety, CoT faithfulness, monitorability, deception, agent safety, tool-use safety, sandbox escape
-- 判断依据是**攻击/防御/评测的对象是不是大模型（含 agent）**：针对 LLM/agent 的 → 收；传统软件漏洞、通用密码学、与模型无关的网络安全 → 不收。
-
-筛选时综合考虑标题和摘要内容，不要仅做简单关键词匹配——理解论文的实际主题。注意 alignment / RLHF 类论文只在其**动机是安全性**（无害、拒答、防操纵）时算安全方向；纯粹为提升任务能力的后训练归基模类。
+筛选时综合考虑标题和摘要内容，不要仅做简单关键词匹配——理解论文的实际主题。
 
 ### 主列表 vs 相关系统方向
 
-上面三类命中的论文进**主列表**。此外还有一类**通用训练/系统方向**的论文：
+上面两类命中的论文进**主列表**。此外还有一类**通用训练/系统方向**的论文：
 
 - 涉及 checkpointing / 分布式与并行计算 / 容错（fault tolerance）/ 通信优化 / HPC 系统等系统关键词，
 - 但**并非面向大语言模型训练**（如通用 HPC 数据流容错、给 MPI 程序自动加检查点、抗静默数据损坏的任务复制等）。

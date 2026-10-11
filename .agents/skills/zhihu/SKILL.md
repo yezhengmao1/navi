@@ -11,7 +11,7 @@ description: 获取知乎当前热榜话题
 
 ## 数据获取
 
-使用 Codex 网页工具 抓取：
+使用 `bash` 运行 `curl -fL --max-time 60` 或 Python urllib 抓取以下 URL，保存响应后用 `read` 读取。若被登录/反爬限制，注明失败，不编造条目：
 
 ```
 https://api.zhihu.com/topstory/hot-list?limit=50

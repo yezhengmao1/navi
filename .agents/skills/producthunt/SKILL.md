@@ -11,7 +11,7 @@ description: 获取 Product Hunt 今日热门产品
 
 ## 数据获取
 
-使用 Codex 网页工具 抓取 Product Hunt 每日排行榜：
+使用 `bash` 运行 `curl -fL --max-time 60` 或 Python urllib 抓取 Product Hunt 每日排行榜，保存 HTML 后解析。若页面需要 JS、登录或被反爬阻断，如实说明无法获取，不编造产品或票数：
 
 ```
 https://www.producthunt.com/leaderboard/daily/{yyyy}/{mm}/{dd}

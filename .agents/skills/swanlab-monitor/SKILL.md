@@ -5,10 +5,10 @@ description: 实时监控 SwanLab 上运行中的大模型训练实验——按�
 
 # SwanLab 训练实验实时监控
 
-盯住正在跑的训练实验，每个周期拉最近窗口的指标，对照指标说明研判异常并告警。深度归因分析请用 `/swanlab-analyze`。
+盯住正在跑的训练实验，每个周期拉最近窗口的指标，对照指标说明研判异常并告警。深度归因分析请用 `/skill:swanlab-analyze`。
 
 设计原则：
-- **最小职责**：取数走 `swanlab/tools/` 单一功能脚本；本 skill 一次只跑**一个监控周期**，节奏交给 `/loop`。
+- **最小职责**：取数走 `swanlab/tools/` 单一功能脚本；本 skill 一次只跑**一个监控周期**；持续监控需另行配置外部调度器，Pi 默认没有定时循环命令。
 - **裸数据进、研判在上层**：`tools/` 只回原始数据。
 
 ## 约定路径
@@ -22,11 +22,11 @@ description: 实时监控 SwanLab 上运行中的大模型训练实验——按�
 - SwanLab URL（`http://host/@user/project/runs/<run_id>/chart`）→ 抽三段。
 - `run_id` 或完整 `user/project/run_id` → 用之（缺段用配置默认）。
 - 实验名 → 在默认/指定项目内 `list_experiments.py` 找同名 run。
-- **参数为空**：用 `list_projects.py` 找 `count.runningExps>0` 的项目，再 `list_experiments.py` 取 `state==RUNNING` 的实验；多个用 `Codex 用户输入工具` 选。
+- **参数为空**：用 `list_projects.py` 找 `count.runningExps>0` 的项目，再 `list_experiments.py` 取 `state==RUNNING` 的实验；多个时在对话中列出实验并等待用户选择。
 
 ## 第二步：跑一个监控周期
 
-> 持续监控：建议 `/loop 5m /swanlab-monitor <实验>`。本 skill 每次只跑一个周期。
+> 本 skill 每次只跑一个周期。用户要求持续监控时，先确认间隔、目标、告警渠道和停止条件，再另行配置 cron/systemd 等调度；未配置前不得声称已在后台监控。
 
 1. 取最近窗口的点（无状态，用 `--tail`）：
    ```
@@ -36,8 +36,8 @@ description: 实时监控 SwanLab 上运行中的大模型训练实验——按�
 2. 读指标说明的「期望趋势/异常信号」，对这个小窗口快速研判：NaN/Inf、尖峰、发散（loss/grad-norm 上行）、平台、吞吐掉速。
 3. 研判结果：
    - **健康** → 一行状态：`step / 关键指标最新值 / OK`。
-   - **异常** → 醒目 ALERT：现象 + 证据(step/值) + 依指标说明的可能原因；必要时对该实验起一个 `swanlab-analyst`（Agent 子类型）做聚焦诊断。
-4. 提示用户用 `/loop` 持续盯，或用 `/swanlab-analyze` 深挖。
+   - **异常** → 醒目 ALERT：现象 + 证据(step/值) + 依指标说明的可能原因；需要指标关系证据时，可用 `subagent`（`agent: "swanlab-analyst"`, `agentScope: "project"`）做聚焦关系分析；异常判断仍由本 skill 完成。扩展不可用时读取 `.pi/agents/swanlab-analyst.md` 在当前会话分析。
+4. 提示用户再次运行 `/skill:swanlab-monitor`、另行配置外部调度，或用 `/skill:swanlab-analyze` 深挖。
 
 ## 注意事项
 
