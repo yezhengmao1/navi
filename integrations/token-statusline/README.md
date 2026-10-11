@@ -72,9 +72,9 @@ cp /tmp/claude-hud/package.json ~/.claude/claude-hud/
 # Single-line Claude Code statusline (run via bun; no system node here).
 #   🤖 <model> | 🧠 <ctx%> | ⏳ 5h <used%> (<reset>) | 🔥 <$/hr> | 📅 <today tokens>
 
-BUN=/root/.bun/bin/bun
-HUD=/root/.claude/claude-hud/dist/index.js
-CCLI=/root/.bun/install/global/node_modules/ccusage/src/cli.js
+BUN="$HOME/.bun/bin/bun"
+HUD="$HOME/.claude/claude-hud/dist/index.js"
+CCLI="$HOME/.bun/install/global/node_modules/ccusage/src/cli.js"
 CACHE="$HOME/.claude/.ccusage-today-tok"   # line: "<date> <ts> <today-tokens> <burn>"
 LOCK="$CACHE.lock"
 TTL=60   # seconds before the ccusage cache is stale
@@ -171,7 +171,7 @@ print(" | ".join(out))
 chmod +x ~/.claude/statusline.sh
 ```
 
-> 路径按无 node 环境写死了 `/root/.bun/...`。换机时改 `BUN` / `HUD` / `CCLI` 三个变量即可。
+> 默认路径基于当前用户的 `$HOME`，适用于上述 bun 安装方式；若安装位置不同，调整 `BUN` / `HUD` / `CCLI` 三个变量。
 
 ## 4. 接入 settings.json
 
@@ -181,7 +181,7 @@ chmod +x ~/.claude/statusline.sh
 {
   "statusLine": {
     "type": "command",
-    "command": "/root/.claude/statusline.sh",
+    "command": "bash \"$HOME/.claude/statusline.sh\"",
     "padding": 0
   }
 }
