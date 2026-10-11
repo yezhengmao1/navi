@@ -1,7 +1,9 @@
 /**
- * Command Guard
+ * Safety Guard
  *
- * Reviews heavy and destructive commands in one pipeline, using a shared\n * confirmation dialog that can return rejection feedback to the agent.
+ * Reviews heavy and destructive commands and sensitive file writes, and
+ * confirms /clear session resets, using a shared confirmation dialog that
+ * can return rejection feedback to the agent.
  *
  *   1. Deletion commands require confirmation, with absolute target paths
  *      where they can be determined without executing shell expressions.
@@ -917,6 +919,34 @@ function blockFromLatestFeedback(reason: string) {
 }
 
 export default function (pi: ExtensionAPI) {
+	pi.registerCommand("clear", {
+		description: "清空当前对话并开始新会话",
+		handler: async (_args, ctx) => {
+			// Confirm only when an interactive UI and a conversation are present.
+			// Non-interactive modes retain the original direct-reset behavior.
+			const entries = ctx.sessionManager.getEntries();
+			const hasConversation = entries.length > 0;
+
+			if (ctx.hasUI && hasConversation) {
+				const result = await confirmOrFeedback(
+					ctx,
+					"🧹 清空当前对话？",
+					"这将开始一个新会话，并从模型上下文中清除当前对话。\n当前会话文件仍会保留在磁盘上。",
+					{ yes: "✅ 是", no: "❌ 否" },
+				);
+				if (!result.allow) return;
+			}
+
+			const result = await ctx.newSession({
+				withSession: async (ctx) => {
+					ctx.ui.notify("对话已清空，已开始新会话。", "info");
+				},
+			});
+
+			if (result.cancelled) return;
+		},
+	});
+
 	pi.registerFlag("shell-guard-review", {
 		description: "Enable the AI auto-reviewer for mv commands (default on)",
 		type: "boolean",
@@ -1074,7 +1104,7 @@ export default function (pi: ExtensionAPI) {
 					return {
 						block: true,
 						reason:
-							`🚫 Blocked by command-guard: mv 被评为 ${riskLabel}风险（${reason}），但没有可用的界面进行确认。`,
+							`🚫 Blocked by safety-guard: mv 被评为 ${riskLabel}风险（${reason}），但没有可用的界面进行确认。`,
 						terminate: true,
 					};
 				}
@@ -1086,7 +1116,7 @@ export default function (pi: ExtensionAPI) {
 				);
 
 				if (!ok) {
-					return blockFromLatestFeedback(`🚫 Blocked by command-guard: mv 未获确认（${riskLabel}风险：${reason}）。`);
+					return blockFromLatestFeedback(`🚫 Blocked by safety-guard: mv 未获确认（${riskLabel}风险：${reason}）。`);
 				}
 			}
 		}

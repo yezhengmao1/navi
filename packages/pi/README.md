@@ -1,19 +1,22 @@
 # Navi Pi 扩展包
 
-原独立 Pi 扩展项目的通用扩展已纳入此目录。这里是**可选 Pi package 源码**，不是项目自动加载目录；Navi 专属的 `subagent`、`brief-select` 仍位于仓库根 `.pi/extensions/`。
+原独立 Pi 扩展项目的通用扩展已纳入此目录。这里是**可选 Pi package 源码**，不是项目自动加载目录；项目所用的通用 `subagent` 执行扩展仍位于仓库根 `.pi/extensions/`；业务角色在 `.pi/agents/`，业务流程在 `.agents/skills/`。
 
 ## 目录
 
 ```text
 packages/pi/
 ├── package.json             # Pi package manifest
-├── extensions/              # 通用扩展，详见 extensions/README.md
+├── extensions/
+│   ├── magic-ui/index.ts    # 唯一 UI 入口，内部按职责分模块
+│   ├── safety-guard.ts     # 执行安全规则与清空会话确认
+│   └── …                  # 其他独立扩展，见 extensions/README.md
 ├── themes/magic.json        # magic 主题
 ├── tests/                   # 离线 Node 测试
 └── install-extensions.sh    # 兼容旧的全局复制/软链接安装
 ```
 
-包含：折叠显示、启动头部、命令确认、magic 编辑器/状态栏、清空会话、停用旧接口的额度提示，以及仅对指定 siflow 模型生效的采样参数覆盖。扩展会影响界面或执行行为，请先审核源码。
+`magic-ui` 统一包含字标、编辑器/状态栏、折叠显示、通用 `questionnaire` 工具和 `/quota`。问卷只提供单选、多选、确认、取消能力，不包含简报等业务选项；由 skill 传入问题和处理答案。`safety-guard.ts` 统一负责命令确认、敏感路径写入确认和清空会话；另有独立的 siflow 特定模型采样扩展。新版 OpenAI 登录暂无已验证额度接口；旧 Codex OAuth 支持手动查询路径，不自动轮询。扩展会影响界面或执行行为，请先审核源码。
 
 ## 安装（从仓库根执行）
 
@@ -28,6 +31,10 @@ pi install ./packages/pi
 ```
 
 安装后在 Pi 中 `/reload`，通过 `/settings` 选择 `magic` 主题，通过 `pi config` 管理资源。
+
+**安全扩展合并：** `clear.ts` 和 `command-guard.ts` 已合并为 `safety-guard.ts`；`/clear`、`shell-guard-review` 和 `heavy-review` 名称及行为不变。若使用显式扩展路径，请改为新文件；旧的全局副本需移除，避免重复注册。
+
+**入口合并：** `magic-header.ts`、`compact-display.ts`、`codex-quota.ts`、`magic-ui.ts` 已合并为 `magic-ui/`，不再单独加载。项目的 `brief-select` 已由通用问卷替代，无需保留旧入口。
 
 **迁移注意：** 若旧脚本已在 `~/.pi/agent/extensions/`、`~/.pi/agent/themes/` 中留下同名文件或软链接，先审核并移除旧副本，再启用 package；Pi 不会自动把旧复制文件识别为同一个包。迁移源码本身不会修改用户配置或切换当前会话的加载来源。
 

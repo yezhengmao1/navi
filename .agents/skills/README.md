@@ -5,7 +5,7 @@
 
 ## 命令
 
-统一使用 Pi 原生命令 `/skill:<name> [参数]`，不再提供同名转发 prompt。`.pi/prompts/` 仅保留两个专用 agent 入口，见下文。
+统一使用 Pi 原生命令 `/skill:<name> [参数]`，不提供转发 prompt。Agent 通过自然语言委派，由 `subagent` 扩展执行。
 
 | 命令 | 说明 |
 |------|------|
@@ -20,7 +20,7 @@
 | `/skill:swanlab-analyze [实验]` | 挖掘指标关系，不做健康评级 |
 | `/skill:swanlab-monitor [实验]` | 单周期异常监控，不自动循环 |
 | `/skill:dlc list\|logs\|workspaces` | 阿里云训练任务查询 |
-| `/skill:server add\|list\|remove` | 远程服务器登记 |
+| `/skill:okx [时间范围]` | OKX 只读订单查询，默认最近一个月，支持 `~10h` / 自然语言 |
 | `/skill:navi sync\|pull\|status` | 配置/缓存 WebDAV 同步 |
 | `/skill:hiboard <内容>` | 手机负一屏推送 |
 | `/skill:feishu <内容>` | 飞书群机器人推送 |
@@ -39,10 +39,11 @@
 
 ## 路径、工具与配置
 
-- 用 `read` 加载 skill，`bash` 运行脚本，`write` 写新结果，`edit` 修改已有文件。用户选择在对话中确认。
+- 用 `read` 加载 skill，`bash` 运行脚本，`write` 写新结果，`edit` 修改已有文件。用户选择优先使用 `magic-ui` 的通用 `questionnaire` 工具，业务选项由 skill 提供；不可用时按 skill 规则在对话中确认。
 - 仓库根相对路径示例 `.agents/skills/...` 不能直接相对任意 cwd 执行；从 SKILL.md 的绝对位置解析实际脚本路径。
 - 凭证统一在 `~/.navi/config.toml`，字段和依赖见各自 SKILL.md。不要打印或提交凭证。
 - GitHub token 可选；SwanLab 需要 `[swanlab]` 与 `swanlab>=0.8.0`；Paper 需要 `[paper]`、`[zotero]` 和 `paper/requirements.txt`；DLC 需要 `[dlc]` 和阿里云 SDK。
+- OKX 需要 `[okx]` 的 `api_key` / `secret_key` / `passphrase`，建议只读密钥；Python 3.11+，无第三方依赖。
 - Navi WebDAV 需要 `[navi]`；推送分别需要 `[hiboard]` / `[feishu]` 或调用方指定的本次参数。
 - 网络源失败如实说明。Pi 默认没有浏览器/网页抓取专用工具，使用已有脚本或 curl/Python urllib。
 
@@ -51,8 +52,8 @@
 - `swanlab/` 没有 SKILL.md，是分析和监控共享的资产包，不能当独立 skill 调用。
 - 指标说明：`~/.navi/swanlab-metrics.md`，不存在时回退 `swanlab/metrics.example.md`。
 - 专用 agents 在仓库 `.pi/agents/`，由 `.pi/extensions/subagent/` 加载，不是 Pi 自动读取的系统角色。
-- `/dlc-inspector [要求]`：一次训练任务进度巡检。
-- `/swanlab-analyst <实验、CSV、指标说明>`：直接分析已有数据。
+- `dlc-inspector`：一次训练任务进度巡检，例如「让 dlc-inspector 巡检一次，不推送」。
+- `swanlab-analyst`：直接分析已有实验 CSV 和指标说明。
 - `source-researcher`：简报内部取数 agent，不需独立用户命令。
 
 Pi 默认没有定时循环命令。持续监控/巡检要另行确认 cron/systemd 等调度与停止条件。

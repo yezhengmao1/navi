@@ -9,14 +9,38 @@ description: 每日简报，并行调用 arxiv / HF Papers / 知乎 / HN / GitHu
 
 ## 1. 确定信息源与推送
 
-在主会话优先调用项目扩展工具 `brief_select`，展示真正的交互选择界面，不要用聊天里的选项列表替代可用的 UI。保留 `/skill:brief` 入口，无需独立 `/brief` 命令。
+在主会话优先调用 `magic-ui` 扩展提供的通用工具 `questionnaire`，不要用聊天里的选项列表替代可用的 UI。业务选项由本 skill 定义，扩展不内置来源、推送或归档逻辑。保留 `/skill:brief` 入口。
 
-- 不带参数时直接调用 `brief_select`：默认预选全部六个来源、飞书关闭、思源开启，等待用户提交。
-- 带参数时（`/skill:brief arxiv 知乎`）将匹配的 skill 名作为 `sources` 预选；用户明确的输出偏好传入 `feishu` / `siyuan`，再展示界面确认。
-- 用户已在本次请求中明确全部来源和输出选项并要求直接执行时，可不重复询问。
-- 返回 `cancelled: true`（包括中止）时停止，不取数、不写思源、不推送。返回确认结果后严格按 `sources`、`feishu`、`siyuan` 执行。
-- 工具未加载时先提示 `/reload`；非 TUI 或用户明确选择文字交互时才在对话中确认，不谎报已弹框。UI 不可用不等于用户同意默认选项。
-- UI 支持 ↑↓ 移动、空格勾选、`a` 全选/清空来源；移动到「确认并开始」按 Enter 提交，Esc 取消。至少选择一个来源。
+不带参数时使用以下问卷；带参数时将匹配的 skill 名填入 `sources` 问题的 `default`，并将明确的输出偏好填入对应确认题的 `default`：
+
+```json
+{
+  "title": "每日简报",
+  "submitLabel": "确认并开始",
+  "questions": [
+    {
+      "id": "sources", "type": "multiple", "prompt": "选择信息源", "min": 1,
+      "options": [
+        {"value": "arxiv", "label": "arxiv"},
+        {"value": "hfpapers", "label": "HF Papers"},
+        {"value": "zhihu", "label": "知乎"},
+        {"value": "hackernews", "label": "Hacker News"},
+        {"value": "github", "label": "GitHub"},
+        {"value": "producthunt", "label": "Product Hunt"}
+      ],
+      "default": ["arxiv", "hfpapers", "zhihu", "hackernews", "github", "producthunt"]
+    },
+    {"id": "feishu", "type": "confirm", "prompt": "推送飞书（稍后需提供本次 KEY）", "default": false},
+    {"id": "siyuan", "type": "confirm", "prompt": "写入思源 navi /daily/{日期}", "default": true}
+  ]
+}
+```
+
+- 用户已明确全部来源和输出选项并要求直接执行时，可不重复询问。
+- 返回 `cancelled: true`（包括中止）时停止，不取数、不写思源、不推送。确认结果读取 `answers.sources`、`answers.feishu`、`answers.siyuan`；不使用预选值代替答案。
+- 工具不可用时提示启用 `packages/pi/` 中的 `magic-ui` 并 `/reload`；不得自动安装。非 TUI、用户不启用扩展或明确选择文字交互时，在对话中确认。UI 不可用不等于用户同意。
+- ↑↓/Tab 移动、空格选择、`a` 全选/清空当前多选题；Enter 提交，Esc 或取消行取消。至少选择一个来源。
+- 问卷不得收集 Token、Webhook KEY 等凭证；飞书 KEY 仍按下文单独处理。
 
 | 来源 | skill |
 |------|-------|

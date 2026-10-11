@@ -4,17 +4,28 @@ The extension set is grouped by responsibility:
 
 | Group | Files | Purpose |
 | --- | --- | --- |
-| Display | `compact-display.ts` | Fold long thinking blocks and bash titles while showing omitted counts |
-| Header | `magic-header.ts` | Custom startup header; show compact Skills and Extensions as one bullet per line |
-| Safety | `command-guard.ts` | Review heavy/destructive commands and collect rejection feedback |
-| Interaction | `magic-ui.ts`, `../themes/magic.json` | Codex-style editor/footer, matching theme, and upstream IDs appended to `/session` |
-| Session | `clear.ts` | Start a clean session with confirmation |
-| Quota | `codex-quota.ts` | Clear stale quota status; no credential access or polling |
+| UI | `magic-ui/index.ts` | Single entry point for all UI modules below |
+| Safety | `safety-guard.ts` | Review heavy/destructive commands, confirm sensitive writes and `/clear`, and collect rejection feedback |
 | Sampling | `siflow-sampling.ts` | Override sampling only for the explicitly matched siflow model |
 
 See [package setup](../README.md) for installation and migration. The optional legacy `install-extensions.sh` removes listed legacy extensions; native package installation does not. Run the following test commands from the package directory (`packages/pi/`), not this `extensions/` directory.
 
-`magic-header.ts` formats the compact `[Skills]` and `[Extensions]` sections as lists without
+## Magic UI modules
+
+Only `magic-ui/index.ts` is discovered as an extension; other modules are imported by it:
+
+- `header.ts`: startup wordmark and resource-list presentation.
+- `editor-footer.ts`: editor, footer, selection-card renderer, working indicator and session info.
+- `compact.ts`: folded thinking and bash call display (does not change command execution).
+- `questionnaire.ts`: generic `questionnaire` tool with `single`, `multiple`, `confirm` questions. Defaults are not consent; `cancelled: true` always returns empty `answers`. Not a credential input form.
+- `quota.ts`: `/quota` command and optional quota snapshot status.
+
+`magic-ui/header.ts` shows a static NAVI wordmark in the theme accent color, followed by
+`Hey Listen! · π <version>` in muted color. Narrow terminals fall back to a compact
+`NAVI` label; the header has no animation timer. Shortcuts and expanded help remain available.
+
+It also formats the compact `[Skills]` and `[Extensions]` sections as aligned,
+width-responsive tables (up to four columns, falling back to one) without
 changing expanded resource details. Pi 1.1 has no public resource-list renderer
 hook, so this uses a guarded, in-memory adapter for the matching startup component.
 It does not modify Pi package files or global prototypes, and restores the
@@ -26,11 +37,26 @@ Run its formatting, narrow-width, and adapter lifecycle tests with:
 node --test tests/extensions-list.test.mjs
 ```
 
-`codex-quota.ts` currently clears the weekly quota status and performs no polling
-or credential access. The new `openai` ChatGPT OAuth token is rejected by the
-legacy usage endpoint; no compatible quota source has been verified yet.
-`/quota` explains this limitation instead of showing an unavailable placeholder.
+`magic-ui/quota.ts` performs no background polling. `/quota` only queries the official
+legacy Codex usage endpoint for an active `openai-codex` model using OAuth, with a
+valid legacy account claim. It rejects custom gateways and API keys, does not follow
+redirects, and discards responses after model/session switches. Results are timestamped
+snapshots, not a live meter; window names come from actual durations, not assumptions.
+
+The current new `openai` OAuth login was tested against the legacy endpoint and returned
+HTTP 401 `no_matching_rule`. No compatible quota source has been verified for that login.
+The command explains this limitation without fetching its credentials or polling.
+Legacy success handling is covered with mocked responses, not a live legacy account.
 Run quota tests with `node --test tests/codex-quota.test.mjs`.
+
+The `questionnaire` tool accepts `{title, questions, submitLabel?}`. Each question has an
+`id`, `prompt`, and `type`. `single`/`multiple` questions include `options: [{value,label}]`;
+`default` is a string/array respectively. `multiple` supports `min`/`max` constraints.
+`confirm` has an optional boolean `default` (false when omitted). Submit returns
+`{cancelled:false, answers:{[id]: string | string[] | boolean}}`; cancel/abort/non-TUI
+returns `{cancelled:true, answers:{}, reason}`. Space selects, Enter submits, Esc cancels.
+Question IDs and option values must be unique; do not use the tool for secrets.
+Questions and their business effects belong in skills, not this extension.
 
 Deletion confirmation lists only absolute target paths in its body.
 Long paths wrap instead of being truncated. Literal paths, quoted spaces,

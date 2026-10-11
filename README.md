@@ -22,8 +22,9 @@ pi
 /skill:navi sync
 /skill:navi status
 /skill:arxiv
+/skill:okx 最近 10 小时的订单
 /skill:brief arxiv hfpapers
-/dlc-inspector 巡检一次，不推送
+让 dlc-inspector 巡检一次，不推送
 /skill:swanlab-analyze username/project/run_id
 ```
 
@@ -33,11 +34,10 @@ Skills 统一使用 `/skill:<name> [参数]`；不再提供同名转发短命令
 
 | 路径 | 用途 |
 |------|------|
-| `.agents/skills/` | 唯一 skill 来源，Pi 原生发现，15 个 skills |
-| `.pi/prompts/` | 仅 2 个专用 agent 入口：`/dlc-inspector`、`/swanlab-analyst` |
+| `.agents/skills/` | 唯一 skill 来源，Pi 原生发现，16 个 skills |
 | `.pi/agents/` | `dlc-inspector`、`swanlab-analyst`、`source-researcher` 定义 |
 | `.pi/extensions/subagent/` | Pi 官方示例扩展，使项目 agents 可独立/并行执行 |
-| `.pi/extensions/brief-select/` | 简报信息源多选和输出确认界面 |
+| `packages/pi/extensions/magic-ui/` | 单一 UI 扩展入口，包含字标、编辑器、状态栏、折叠显示、通用问卷和额度查询 |
 | `packages/pi/` | 可选的通用 Pi 扩展包：界面、命令确认、会话与主题，附安装脚本和测试 |
 | `mcp/siyuan/` | 思源 MCP server |
 
@@ -79,16 +79,15 @@ pi mcp list
 ## 离线验证
 
 ```bash
-# PI_PACKAGE_DIR 指向安装后的 @earendil-works/pi-coding-agent 包目录
-PI_PACKAGE_DIR=/path/to/@earendil-works/pi-coding-agent node .pi/extensions/brief-select/test.mjs
-# 默认查找本机 Pi 安装；也可设置 PI_PACKAGE_ROOT
+# 默认查找本机 Pi 安装；也可设置 PI_PACKAGE_ROOT 指向 Pi 包目录
 node --test packages/pi/tests/*.test.mjs
 bash -n packages/pi/install-extensions.sh
 python3 -m unittest discover -s .agents/skills/feishu -p 'test_*.py'
 python3 -m unittest discover -s .agents/skills/paper -p 'test_*.py'
+python3 -m unittest discover -s .agents/skills/okx -p 'test_*.py'
 ```
 
-简报交互检查使用 Pi 扩展加载器和模拟按键；通用扩展测试覆盖部分显示与生命周期行为。不请求模型、不运行云端任务、不发送通知。
+通用问卷使用模拟按键验证；扩展测试覆盖部分显示、加载与生命周期行为。不请求模型、不运行云端任务、不发送通知。
 
 ## License
 

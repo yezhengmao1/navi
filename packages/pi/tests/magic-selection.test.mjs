@@ -16,7 +16,7 @@ const jiti = createJiti(import.meta.url, { alias: {
   "@earendil-works/pi-coding-agent": join(root, "dist/index.js"),
   "@earendil-works/pi-tui": require.resolve("@earendil-works/pi-tui"),
 } });
-const { renderSelectionCard, default: extension } = await jiti.import(fileURLToPath(new URL("../extensions/magic-ui.ts", import.meta.url)));
+const { renderSelectionCard, default: extension } = await jiti.import(fileURLToPath(new URL("../extensions/magic-ui/editor-footer.ts", import.meta.url)));
 const { visibleWidth, stripTerminalSequences } = await import(require.resolve("@earendil-works/pi-tui"));
 const theme = {
   fg: (_, text) => `\x1b[36m${text}\x1b[39m`,

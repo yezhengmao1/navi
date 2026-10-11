@@ -338,6 +338,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_start", (_event, ctx) => {
 		resetPhase(ctx);
+		if (ctx.mode !== "tui") return;
 		class MagicEditor extends CustomEditor {
 			constructor(tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) {
 				super(tui, theme, keybindings, { paddingX: EDITOR_PADDING });

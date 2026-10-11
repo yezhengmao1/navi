@@ -3,16 +3,8 @@
  *
  * Replaces pi's built-in startup header with a theme-integrated version.
  *
- * Under the `magic` theme the header is rendered as an animated Matrix-style
- * "digital rain": faint katakana/digit columns fall through the header block
- * while a bright cascade sweeps across the `pi` logo. Colors are pulled live
- * from `ctx.ui.theme` (the green token drives the rain), so switching themes
- * re-themes the header on the next render. Any non-`magic` theme falls back to
- * the original soft, theme-integrated palette.
- *
- * Animation is driven by a `setInterval` loop that calls `tui.requestRender()`,
- * mirroring the built-in working indicator. The timer is torn down in
- * `dispose()` so the header never leaks a background loop.
+ * Shows a static NAVI wordmark and Hey Listen! tagline in the active theme.
+ * Narrow terminals use a compact wordmark. The active header has no timers.
  */
 
 import {
@@ -54,13 +46,55 @@ function themeName(theme: { name?: string }): string {
 
 const LIST_SECTIONS = new Set(["[Extensions]", "[Skills]"]);
 
-/** Only compact resource lists; leave expanded paths and other text alone. */
-export function extensionListText(text: string, dim: (text: string) => string): string {
+const NAVI_WORDMARK = [
+	"  ███╗   ██╗ █████╗ ██╗   ██╗██╗",
+	"  ████╗  ██║██╔══██╗██║   ██║██║",
+	"  ██╔██╗ ██║███████║██║   ██║██║",
+	"  ██║╚██╗██║██╔══██║╚██╗ ██╔╝██║",
+	"  ██║ ╚████║██║  ██║ ╚████╔╝ ██║",
+	"  ╚═╝  ╚═══╝╚═╝  ╚═╝  ╚═══╝ ╚═╝",
+];
+
+export function renderNaviWordmark(
+	width: number,
+	fg: (color: "accent" | "muted", text: string) => string,
+	version = VERSION,
+): string[] {
+	const available = Math.max(0, width);
+	const logo = available >= Math.max(...NAVI_WORDMARK.map(visibleWidth))
+		? NAVI_WORDMARK : ["  NAVI"];
+	return [
+		...logo.map(line => fg("accent", line)),
+		"",
+		fg("muted", `  Hey Listen!  ·  π ${version}`),
+	].map(line => truncateToWidth(line, available, ""));
+}
+
+function compactListLabels(text: string): string[] | undefined {
 	const lines = text.split("\n");
-	if (lines.length !== 2 || !LIST_SECTIONS.has(stripTerminalSequences(lines[0]!).trim())) return text;
+	if (lines.length !== 2 || !LIST_SECTIONS.has(stripTerminalSequences(lines[0]!).trim())) return;
 	const body = stripTerminalSequences(lines[1]!);
-	if (!body.startsWith("  ") || !body.trim() || body.trimStart().startsWith("- ")) return text;
-	return lines[0] + "\n" + body.trim().split(", ").map(label => dim(`  - ${label}`)).join("\n");
+	if (!body.startsWith("  ") || !body.trim() || body.trimStart().startsWith("- ")) return;
+	return body.trim().split(", ").map(label => `- ${label}`);
+}
+
+/** Only compact resource lists; leave expanded paths and other text alone. */
+export function extensionListText(text: string, dim: (text: string) => string, width = 80, sharedCellWidth = 0): string {
+	const labels = compactListLabels(text);
+	if (!labels) return text;
+	const lines = text.split("\n");
+	const available = Math.max(0, width - 2);
+	const cellWidth = Math.max(sharedCellWidth, ...labels.map(visibleWidth));
+	const gap = 3;
+	const columns = Math.max(1, Math.min(4, Math.floor((available + gap) / (cellWidth + gap))));
+	const rows: string[] = [];
+	for (let i = 0; i < labels.length; i += columns) {
+		const row = labels.slice(i, i + columns).map((label, column, cells) =>
+			column === cells.length - 1 ? label : label + " ".repeat(cellWidth - visibleWidth(label) + gap),
+		).join("");
+		rows.push(dim(truncateToWidth(`  ${row}`, Math.max(0, width), "")));
+	}
+	return lines[0] + "\n" + rows.join("\n");
 }
 
 /**
@@ -79,8 +113,17 @@ export function extensionListAdapter(dim: (text: string) => string) {
 		invalidate?: () => void;
 	};
 	const patched = new Map<Node, { original: () => string; wrapped: () => string }>();
+	let width = 80;
+	let sharedCellWidth = 0;
+	const cellWidths = new Map<Node, number>();
 	return {
-		update(root: unknown) {
+		update(root: unknown, nextWidth = 80) {
+			const previouslyPatched = new Set(patched.keys());
+			const mounted = new Set<Node>();
+			if (width !== nextWidth) {
+				width = nextWidth;
+				for (const node of patched.keys()) node.invalidate?.();
+			}
 			const pending = [root];
 			const seen = new Set<unknown>();
 			// Do not walk an unbounded transcript or follow arbitrary object fields.
@@ -91,13 +134,18 @@ export function extensionListAdapter(dim: (text: string) => string) {
 				const node = value as Node;
 				if (typeof node.build === "function" && typeof node.setExpanded === "function"
 					&& typeof node.invalidate === "function" && typeof node.state?.expanded === "boolean") {
+					const text = (patched.get(node)?.original ?? node.build).call(node);
+					mounted.add(node);
+					if (!node.state.expanded) {
+						const labels = compactListLabels(text);
+						cellWidths.set(node, labels ? Math.max(...labels.map(visibleWidth)) : 0);
+					}
 					if (patched.has(node)) continue;
-					const text = node.build();
 					if (typeof text === "string" && LIST_SECTIONS.has(stripTerminalSequences(text.split("\n")[0]!).trim())) {
 						const original = node.build;
 						const wrapped = () => {
 							const text = original.call(node);
-							return node.state?.expanded === false ? extensionListText(text, dim) : text;
+							return node.state?.expanded === false ? extensionListText(text, dim, width, sharedCellWidth) : text;
 						};
 						patched.set(node, { original, wrapped });
 						node.build = wrapped;
@@ -108,6 +156,14 @@ export function extensionListAdapter(dim: (text: string) => string) {
 				else if (Array.isArray(node.children)) pending.push(...node.children);
 				if (node.child) pending.push(node.child);
 			}
+			for (const node of cellWidths.keys()) {
+				if (!mounted.has(node)) cellWidths.delete(node);
+			}
+			const nextCellWidth = Math.max(0, ...cellWidths.values());
+			if (sharedCellWidth !== nextCellWidth) {
+				sharedCellWidth = nextCellWidth;
+				for (const node of previouslyPatched) node.invalidate?.();
+			}
 		},
 		dispose() {
 			for (const [node, { original, wrapped }] of patched) {
@@ -117,6 +173,7 @@ export function extensionListAdapter(dim: (text: string) => string) {
 				}
 			}
 			patched.clear();
+			cellWidths.clear();
 		},
 	};
 }
@@ -133,19 +190,11 @@ export default function (pi: ExtensionAPI) {
 }
 
 /**
- * Original theme-integrated header: soft palette, no bold, no bright accent.
+ * Static wordmark with theme-aware shortcuts and compact resource lists.
  */
 function renderSoftHeader(ctx: ExtensionContext) {
 	ctx.ui.setHeader((tui, theme) => {
 		const extensionList = extensionListAdapter(text => ctx.ui.theme.fg("dim", text));
-		const logo =
-			theme.fg("borderAccent", "╭── ") +
-			theme.fg("warning", "终端") +
-			theme.fg("borderAccent", " ──╮") +
-			"\n" +
-			theme.fg("borderAccent", "╰─ ") +
-			theme.fg("text", "π") +
-			theme.fg("muted", ` 版本 ${VERSION} · 已就绪`);
 		const hint = (keybinding: Parameters<typeof keyHint>[0], description: string) =>
 			keyHint(keybinding, description);
 		const sep = theme.fg("dim", " · ");
@@ -158,20 +207,19 @@ function renderSoftHeader(ctx: ExtensionContext) {
 			"可以询问 Pi 的用法、功能与扩展方式。",
 		);
 
-		const compact =
-			logo +
-			"\n" +
+		const compact = [
 			[
 				hint("app.interrupt", "中断"),
 				rawKeyHint(`${keyText("app.clear")}/${keyText("app.exit")}`, "清屏/退出"),
+			].join(sep),
+			[
 				rawKeyHint("/", "命令"),
 				rawKeyHint("!", "终端"),
 				hint("app.tools.expand", "更多"),
-			].join(sep);
+			].join(sep),
+		].join("\n");
 
 		const expanded =
-			logo +
-			"\n" +
 			[
 				hint("app.interrupt", "中断"),
 				hint("app.clear", "清屏"),
@@ -200,8 +248,10 @@ function renderSoftHeader(ctx: ExtensionContext) {
 
 		return {
 			render(width: number): string[] {
-				extensionList.update(tui);
+				extensionList.update(tui, width);
 				return [
+					...renderNaviWordmark(width, (color, text) => ctx.ui.theme.fg(color, text)),
+					"",
 					...fitLines(body(), width),
 					"",
 					...fitLines(onboarding, width),
