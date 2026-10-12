@@ -5,10 +5,21 @@ The extension set is grouped by responsibility:
 | Group | Files | Purpose |
 | --- | --- | --- |
 | UI | `magic-ui/index.ts` | Single entry point for all UI modules below |
+| Work recap | `idle-summary.ts` | After five idle minutes, append a Markdown work recap beneath the conversation |
 | Safety | `safety-guard.ts` | Review heavy/destructive commands, confirm sensitive writes and `/clear`, and collect rejection feedback |
 | Sampling | `siflow-sampling.ts` | Override sampling only for the explicitly matched siflow model |
 
 See [package setup](../README.md) for installation and migration. The optional legacy `install-extensions.sh` removes listed legacy extensions; native package installation does not. Run the following test commands from the package directory (`packages/pi/`), not this `extensions/` directory.
+
+## Idle work summary
+
+`idle-summary.ts` starts a five-minute timer after `agent_settled` (not while tools or model responses are running). In TUI mode it appends a custom transcript entry beneath the conversation: a short Markdown title and emoji-prefixed bold labels, with the theme's `customMessageBg` background and no extra horizontal rule. The prompt requests four concise items (task, progress, caveat, next step), about 140 Chinese characters. It makes at most one attempt per completed work period. New input/work cancels pending generation but does not remove past summaries; dialogs pause the timer. Session navigation, compaction and shutdown cancel it. It does not generate summaries just because a session was opened.
+
+The extension uses the current model for one additional, bounded request (up to 700 output tokens, 60-second timeout); provider charges apply. Only the latest 24 user/assistant text messages, capped at 24,000 characters, are considered. Tool output, tool arguments, images and thinking are excluded. Common credential patterns and links are redacted on input and output, but this is not a guarantee against all sensitive data. Summaries are persisted as custom entries in the existing session file and restored in the transcript by the entry renderer. They are not sent to the LLM as context and do not create compaction entries or separate files. The summary is a best-effort reminder, not authoritative task state; errors are silently skipped until new work completes. RPC/print modes do not make requests. Reloading clears the timer, not historical summary entries.
+
+Use `/idle-summary` to inspect loading, pending timer and the latest generation outcome without making a model request. Use `/idle-summary now` in an idle TUI to immediately test generation (one billed model request). Diagnostics are in memory only and omit provider error bodies. Reload after updating; reload itself does not start a summary timer.
+
+Run `node --test tests/idle-summary.test.mjs` for offline lifecycle, cancellation, diagnostics and redaction tests.
 
 ## Magic UI modules
 
