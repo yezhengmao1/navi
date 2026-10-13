@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { load, root, tui } from './helpers.mjs';
-const { BlockClock, blockTimingAdapter, messageKey, timingRow, default: register } = await load('block-timing');
+const { BlockClock, blockTimingAdapter, messageKey, timingRow, guardTimingLabel, default: register } = await load('block-timing');
 const native = path => import(pathToFileURL(join(root, 'dist/modes/interactive', path)).href);
 const { initTheme } = await native('theme/theme.js');
 initTheme('dark', false);
@@ -12,6 +12,22 @@ const { ToolExecutionComponent } = await native('components/tool-execution.js');
 const plain = lines => lines.map(tui.stripTerminalSequences).join('\n');
 const message = () => ({ role: 'assistant', provider: 'test', model: 'test', timestamp: 1,
   content: [{ type: 'thinking', thinking: '分析中文' }, { type: 'text', text: 'Hello world' }], stopReason: 'stop' });
+
+test('file tool titles lose OSC 8 links without changing colors, output or other tools', () => {
+  for (const terminator of ['\x07', '\x1b\\']) {
+    for (const toolName of ['read', 'edit', 'write', 'bash']) {
+      const path = '\x1b[36m/tmp/file.ts\x1b[39m';
+      const linked = `\x1b]8;;file:///tmp/file.ts${terminator}${path}\x1b]8;;${terminator}`;
+      const node = { toolName, toolCallId: 'a', updateResult() {}, render: () => [`${toolName} ${linked}`, linked] };
+      const original = node.render;
+      const adapter = blockTimingAdapter(new BlockClock(), s => s);
+      adapter.update({ children: [node] });
+      assert.deepEqual(node.render(80), [`${toolName} ${toolName === 'bash' ? linked : path}`, linked]);
+      adapter.dispose();
+      assert.equal(node.render, original);
+    }
+  }
+});
 
 test('separate block clocks exclude initial waiting, close on end/transition, freeze on abort', () => {
   const clock = new BlockClock();
@@ -109,7 +125,7 @@ test('consecutive thinking blocks group their own durations; old messages remain
 test('lifecycle persists only custom data, restores branch and cleans up', () => {
   const handlers = new Map();
   const entries = [];
-  const pi = { on: (name, fn) => handlers.set(name, fn), appendEntry: (customType, data) => entries.push({ type: 'custom', customType, data }) };
+  const pi = { events: { on: () => () => {} }, on: (name, fn) => handlers.set(name, fn), appendEntry: (customType, data) => entries.push({ type: 'custom', customType, data }) };
   const controller = register(pi);
   const ctx = { mode: 'tui', ui: { theme: { fg: (_, s) => s } }, sessionManager: { getBranch: () => entries } };
   const m = message();
@@ -130,4 +146,39 @@ test('lifecycle persists only custom data, restores branch and cleans up', () =>
   handlers.get('session_tree')({}, ctx);
   assert.doesNotMatch(plain(node.render(60)), /Output/);
   handlers.get('session_shutdown')();
+});
+
+test('guard stages exclude execution while reviewing, waiting, or blocked', () => {
+  const guard = { toolCallId: 'a', reviewMs: 1200, waitMs: 0, phase: 'confirm', phaseStarted: 2000 };
+  assert.equal(guardTimingLabel(guard, 99999, 7300), '审查 1.2s · 等待确认 5.3s');
+  assert.equal(guardTimingLabel({ ...guard, phase: undefined, waitMs: 5300, status: 'passed' }, 100, 9000), '审查 1.2s · 等待确认 5.3s · 执行 0.1s');
+  assert.match(guardTimingLabel({ ...guard, phase: undefined, status: 'blocked' }, 99999, 9000), /已阻止$/);
+  assert.doesNotMatch(guardTimingLabel({ ...guard, status: 'interrupted' }, 99999, 9000), /执行/);
+  assert.equal(guardTimingLabel(undefined, 100, 9000), '0.1s');
+});
+
+test('truncated timing titles paint the ellipsis in all tool states and fit narrow widths', () => {
+  for (const bg of ['\x1b[44m', '\x1b[42m', '\x1b[41m']) {
+    for (const width of [0, 1, 4, 6, 7, 8, 20, 80]) {
+      const row = timingRow(`${bg}\x1b[1mbash scp 中文 ${'x'.repeat(100)} (timeout: 120)\x1b[0m`,
+        '3.9s', width, s => s, s => `${bg}${s}\x1b[49m`);
+      assert.equal(tui.visibleWidth(row), width);
+      if (width >= 7) {
+        assert.ok(row.includes(`${bg}…`), 'ellipsis must restore the tool background');
+      }
+    }
+  }
+});
+
+test('timing tail paints padding and label with the tool background and resets title attributes', () => {
+  const backgrounds = { pending: '\x1b[44m', success: '\x1b[42m', error: '\x1b[41m' };
+  for (const bg of Object.values(backgrounds)) {
+    const row = timingRow(`${bg}\x1b[1mbash\x1b[22m\x1b[49m`, '1.2s', 30,
+      s => `\x1b[90m${s}\x1b[39m`, s => `${bg}${s}\x1b[49m`);
+    const tail = row.slice(row.lastIndexOf(bg));
+    assert.ok(tail.startsWith(bg + '\x1b[22;23;39m'));
+    assert.match(tail, / +\x1b\[90m1\.2s/);
+    assert.ok(tail.endsWith('\x1b[49m'));
+    assert.equal(tui.visibleWidth(row), 30);
+  }
 });

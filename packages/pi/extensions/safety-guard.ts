@@ -26,9 +26,58 @@
 
 import { uuidv7 } from "@earendil-works/pi-ai";
 import { homedir } from "node:os";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { isAbsolute } from "node:path";
-import type { ExtensionAPI, ExtensionContext, ExtensionUIContext, Theme } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ExtensionUIContext, Theme, ToolCallEvent } from "@earendil-works/pi-coding-agent";
 import { CURSOR_MARKER, type Focusable, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+
+// --- per-tool safety timing (UI metadata, never model context) -------------
+type GuardPhase = "review" | "confirm";
+export interface GuardTiming {
+	toolCallId: string;
+	reviewMs?: number;
+	waitMs?: number;
+	phase?: GuardPhase;
+	phaseStarted?: number;
+	status?: "passed" | "blocked" | "interrupted";
+}
+const guardScope = new AsyncLocalStorage<{
+	measure<T>(phase: GuardPhase, work: () => Promise<T>): Promise<T>;
+}>();
+
+/** Async-local scope keeps parallel tool calls and confirmation dialogs isolated. */
+export async function trackGuard<T extends { block?: boolean } | undefined>(
+	toolCallId: string, work: () => Promise<T>, publish: (data: GuardTiming) => void,
+	persist: (data: GuardTiming) => void, now = () => performance.now(), aborted = () => false,
+): Promise<T> {
+	const timing: GuardTiming = { toolCallId };
+	let active = false;
+	const emit = () => { if (active) publish({ ...timing }); };
+	return guardScope.run({
+		async measure(phase, run) {
+			active = true;
+			const field = phase === "review" ? "reviewMs" : "waitMs";
+			timing[field] ??= 0;
+			timing.phase = phase; timing.phaseStarted = now(); emit();
+			try { return await run(); }
+			finally {
+				timing[field]! += Math.max(0, now() - timing.phaseStarted!);
+				delete timing.phase; delete timing.phaseStarted; emit();
+			}
+		},
+	}, async () => {
+		try {
+			const result = await work();
+			timing.status = aborted() ? "interrupted" : result?.block ? "blocked" : "passed";
+			return result;
+		} catch (error) { timing.status = "interrupted"; throw error; }
+		finally { if (active) { emit(); persist({ ...timing }); } }
+	});
+}
+
+export function guardPhase<T>(phase: GuardPhase, work: () => Promise<T>): Promise<T> {
+	return guardScope.getStore()?.measure(phase, work) ?? work();
+}
 
 // --- confirmation with optional feedback ---------------------------------
 
@@ -201,10 +250,10 @@ export async function confirmOrFeedback(
 	const ui: ExtensionUIContext = ctx.ui;
 	if (!ctx.hasUI) return { allow: false, feedback: undefined };
 
-	return ui.custom<ConfirmResult>(
+	return guardPhase("confirm", () => ui.custom<ConfirmResult>(
 		(_tui, theme, _kb, done) =>
 			new ConfirmFeedbackDialog(theme, ui, done, title, body, labels?.yes, labels?.no),
-	);
+	));
 }
 
 // --- static heaviness detection -------------------------------------------
@@ -958,7 +1007,11 @@ export default function (pi: ExtensionAPI) {
 		default: true,
 	});
 
-	pi.on("tool_call", async (event, ctx) => {
+	let generation = 0;
+	for (const event of ["session_switch", "session_tree", "session_shutdown"] as const) {
+		pi.on(event, () => { generation++; });
+	}
+	const checkTool = async (event: ToolCallEvent, ctx: ExtensionContext) => {
 		// Rule 3: write/edit must not touch sensitive paths.
 		if (event.toolName === "write" || event.toolName === "edit") {
 			const path = (event.input as { path?: unknown }).path;
@@ -1004,7 +1057,7 @@ export default function (pi: ExtensionAPI) {
 					);
 				}
 			} else if (weight?.verdict === "suspicious" && pi.getFlag("heavy-review") !== false) {
-				const { load, reason } = await reviewLoad(segment.trim(), ctx, ctx.signal);
+				const { load, reason } = await guardPhase("review", () => reviewLoad(segment.trim(), ctx, ctx.signal));
 				if (load !== "low") {
 					const loadLabel = load === "high" ? "高" : "中";
 					const { allow, feedback } = await confirmOrFeedback(
@@ -1093,7 +1146,7 @@ export default function (pi: ExtensionAPI) {
 				const reviewEnabled = pi.getFlag("shell-guard-review") !== false;
 				if (!reviewEnabled) continue; // reviewer opted out; allow the move
 
-				const { risk, reason } = await reviewMv(segment.trim(), ctx, ctx.signal);
+				const { risk, reason } = await guardPhase("review", () => reviewMv(segment.trim(), ctx, ctx.signal));
 
 				if (risk === "low") continue; // allowed
 
@@ -1122,5 +1175,13 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		return undefined;
+	};
+	pi.on("tool_call", async (event, ctx) => {
+		const owner = generation;
+		return trackGuard(event.toolCallId, () => checkTool(event, ctx), data => {
+			if (owner === generation) pi.events.emit("safety-guard:timing", data);
+		}, data => {
+			if (owner === generation) pi.appendEntry("safety-guard:timing", data);
+		}, () => performance.now(), () => ctx.signal?.aborted ?? false);
 	});
 }

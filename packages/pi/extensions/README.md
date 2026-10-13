@@ -57,10 +57,22 @@ compute time**; initial response/network wait is excluded. Adjacent thinking blo
 that Pi renders together show their summed durations. Missing historical timings
 are not estimated. Assistant timings persist as custom session entries excluded
 from model context; tools use Pi's persisted `durationMs`. Branch switches restore
-only that branch's timing data. Pi 1.1 has no assistant-block renderer hook, so a
-guarded instance adapter is mounted through the header and restored on disposal;
+only that branch's timing data. Tool timing labels and their padding inherit the
+native pending/success/error background, without inheriting bold title styling.
+
+When safety-guard triggers AI review or a confirmation dialog, the same tool header
+shows `审查 1.2s · 等待确认 5.3s · 执行 0.1s`. Active stages update live; denied
+or interrupted calls show `已阻止` / `已中断` instead of execution time. Ordinary
+static checks add no labels. Review and user wait are measured separately using
+async-local per-call state, published through `safety-guard:timing`, and persisted
+as non-context custom entries. Pi emits tool start before guards, so the live
+execution estimate restarts after approval; final execution uses Pi's recorded
+duration. Late guard updates after a session switch are discarded.
+
+Pi 1.1/1.2 have no assistant-block renderer hook, so a guarded instance adapter
+is mounted through the header and restored on disposal;
 no package files or global prototypes are changed. Test after Pi upgrades:
-`node --test tests/block-timing.test.mjs`.
+`node --test tests/block-timing.test.mjs tests/guard-timing.test.mjs`.
 
 `magic-ui/quota.ts` performs no background polling. `/quota` only queries the official
 legacy Codex usage endpoint for an active `openai-codex` model using OAuth, with a

@@ -77,25 +77,31 @@ test('manual test reports empty output and errors without exposing bodies', asyn
   await h.command('now'); assert.match(h.notices.at(-1), /请求异常/); assert.doesNotMatch(h.notices.at(-1), /private secret/);
   h.ctx.mode = 'rpc'; await h.command('now'); assert.match(h.notices.at(-1), /不是/);
 });
-test('transcript renderer uses emoji labels and background without extra separator', t => {
+test('summary uses compact emoji rows without next steps, with a dim right-aligned caption', t => {
   const h = harness(t);
   const text = '任务：核查 TP 交叉熵\n进展：已完成源码审查，尚未多卡实测。\n注意：long_function_name_' + 'x'.repeat(100) + '\n下一步：已完成，无待办';
   const md = summaryMarkdown(text);
-  assert.ok(md.startsWith('**📝 上下文总结**'));
-  assert.doesNotMatch(md, /^---$/m);
-  assert.match(md, /🎯 \*\*任务：\*\*/);
-  assert.match(md, /✅ \*\*进展：\*\*/);
-  assert.match(md, /💡 \*\*注意：\*\*/);
-  assert.match(md, /➡️ \*\*下一步：\*\*/);
+  assert.ok(md.startsWith('🎯 **任务：**'));
+  assert.doesNotMatch(md, /上下文总结|下一步|\n\n/u);
+  assert.match(md, /  \n✅ \*\*进展：\*\*/);
+  assert.match(md, /  \n💡 \*\*注意：\*\*/);
+  assert.match(md, /\*\*进展：\*\*/);
+  assert.match(md, /\*\*注意：\*\*/);
+  assert.equal(summaryMarkdown('📝 **上下文总结**\n🎯 任务：测试\n➡️ 下一步：删除\n续行'), '🎯 **任务：** 测试');
   assert.doesNotMatch(md, /[╭╰│]/);
   const colors = [];
   const component = h.renderers['idle-work-summary']({ data: { text } }, {}, {
     bg: (color, s) => { colors.push(color); return `\x1b[48;5;236m${s}\x1b[0m`; },
+    fg: (color, s) => { assert.equal(color, 'dim'); return `\x1b[90m${s}\x1b[39m`; },
   });
   for (const width of [16, 24, 40, 80, 120]) {
     const lines = component.render(width);
     assert.ok(lines.every(line => tui.visibleWidth(line) <= width), `width ${width}`);
     assert.ok(lines.some(line => line.includes('\x1b[48;5;236m')));
+    const caption = lines.find(line => line.includes('上下文总结'));
+    assert.ok(caption.includes('\x1b[90m'));
+    assert.equal(tui.stripTerminalSequences(caption), ' '.repeat(width - 11) + '上下文总结 ');
+    assert.doesNotMatch(lines.join('\n'), /下一步/u);
   }
   assert.ok(colors.every(color => color === 'customMessageBg'));
 });

@@ -11,6 +11,7 @@ const { createJiti } = require('jiti');
 const jiti = createJiti(import.meta.url, { alias: {
   '@earendil-works/pi-coding-agent': join(root, 'dist/index.js'),
   '@earendil-works/pi-tui': require.resolve('@earendil-works/pi-tui'),
+  '@earendil-works/pi-ai': join(root, '../pi-ai/dist/index.js'),
   'typebox': require.resolve('typebox'),
 } });
 export const load = name => jiti.import(fileURLToPath(new URL(`../extensions/magic-ui/${name}.ts`, import.meta.url)));
