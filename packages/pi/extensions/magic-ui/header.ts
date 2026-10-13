@@ -178,22 +178,25 @@ export function extensionListAdapter(dim: (text: string) => string) {
 	};
 }
 
-export default function (pi: ExtensionAPI) {
+type BlockTiming = ReturnType<typeof import("./block-timing.js").default>;
+
+export default function (pi: ExtensionAPI, timing?: BlockTiming) {
 	pi.on("session_start", async (_event, ctx) => {
 		// Only the interactive TUI renders a header.
 		if (ctx.mode !== "tui") return;
 
 		// Keep the header static: slicing styled ANSI strings by character index can
 		// corrupt escape sequences and make the rendered width exceed the terminal.
-		renderSoftHeader(ctx);
+		renderSoftHeader(ctx, timing);
 	});
 }
 
 /**
  * Static wordmark with theme-aware shortcuts and compact resource lists.
  */
-function renderSoftHeader(ctx: ExtensionContext) {
+function renderSoftHeader(ctx: ExtensionContext, timing?: BlockTiming) {
 	ctx.ui.setHeader((tui, theme) => {
+		timing?.mount(tui, ctx);
 		const extensionList = extensionListAdapter(text => ctx.ui.theme.fg("dim", text));
 		const hint = (keybinding: Parameters<typeof keyHint>[0], description: string) =>
 			keyHint(keybinding, description);
@@ -248,6 +251,7 @@ function renderSoftHeader(ctx: ExtensionContext) {
 
 		return {
 			render(width: number): string[] {
+				timing?.update();
 				extensionList.update(tui, width);
 				return [
 					...renderNaviWordmark(width, (color, text) => ctx.ui.theme.fg(color, text)),
@@ -260,7 +264,7 @@ function renderSoftHeader(ctx: ExtensionContext) {
 				];
 			},
 			invalidate() {},
-			dispose() { extensionList.dispose(); },
+			dispose() { extensionList.dispose(); timing?.dispose(); },
 		};
 	});
 }

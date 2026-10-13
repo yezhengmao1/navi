@@ -1,0 +1,133 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { load, root, tui } from './helpers.mjs';
+const { BlockClock, blockTimingAdapter, messageKey, timingRow, default: register } = await load('block-timing');
+const native = path => import(pathToFileURL(join(root, 'dist/modes/interactive', path)).href);
+const { initTheme } = await native('theme/theme.js');
+initTheme('dark', false);
+const { AssistantMessageComponent } = await native('components/assistant-message.js');
+const { ToolExecutionComponent } = await native('components/tool-execution.js');
+const plain = lines => lines.map(tui.stripTerminalSequences).join('\n');
+const message = () => ({ role: 'assistant', provider: 'test', model: 'test', timestamp: 1,
+  content: [{ type: 'thinking', thinking: '分析中文' }, { type: 'text', text: 'Hello world' }], stopReason: 'stop' });
+
+test('separate block clocks exclude initial waiting, close on end/transition, freeze on abort', () => {
+  const clock = new BlockClock();
+  clock.update('a', 'thinking_start', 0, 1000);
+  clock.update('a', 'thinking_delta', 0, 1200);
+  clock.update('a', 'thinking_end', 0, 1500);
+  clock.update('a', 'text_start', 1, 2000);
+  clock.update('a', 'text_delta', 1, 2500);
+  assert.equal(clock.elapsed('a', [0], 9000), 500);
+  assert.equal(clock.elapsed('a', [1], 2600), 600);
+  clock.finish('a', 2800);
+  assert.equal(clock.elapsed('a', [1], 9999), 800);
+  assert.equal(clock.elapsed('unknown', [0], 9999), undefined);
+  clock.update('b', 'thinking_delta', 0, 3000);
+  clock.update('b', 'text_start', 1, 3100);
+  assert.equal(clock.elapsed('b', [0], 9999), 100);
+});
+
+test('right aligned annotation fits ANSI and CJK even at narrow widths', () => {
+  for (const width of [0, 1, 4, 8, 20, 80]) {
+    const row = timingRow('\x1b[36m中文标题很长\x1b[0m', '12.6s', width, s => `\x1b[2m${s}\x1b[0m`);
+    assert.equal(tui.visibleWidth(row), width);
+  }
+});
+
+test('native assistant blocks render timings, survive update/collapse/resize, restore cleanly', () => {
+  const m = message();
+  const clock = new BlockClock();
+  const key = messageKey(m);
+  clock.update(key, 'thinking_start', 0, 0);
+  clock.update(key, 'thinking_end', 0, 8200);
+  clock.update(key, 'text_start', 1, 8300);
+  clock.finish(key, 11700);
+  const node = new AssistantMessageComponent(m);
+  const original = node.updateContent;
+  const tree = { getMountedRoots: () => [{ children: [node] }] };
+  const adapter = blockTimingAdapter(clock, s => s, () => 15000);
+  adapter.update(tree);
+  let result = plain(node.render(60));
+  assert.match(result, /Thinking +8\.2s/);
+  assert.match(result, /Output +3\.4s/);
+  assert.match(result, /分析中文/);
+  node.setHideThinkingBlock(true);
+  result = plain(node.render(60));
+  assert.match(result, /Thinking\.\.\. +8\.2s/);
+  assert.doesNotMatch(result, /分析中文/);
+  node.setHideThinkingBlock(false);
+  node.invalidate();
+  adapter.update(tree);
+  result = plain(node.render(60));
+  assert.equal((result.match(/8\.2s/g) ?? []).length, 1);
+  for (const width of [8, 20, 80]) for (const line of node.render(width)) assert.ok(tui.visibleWidth(line) <= width);
+  adapter.dispose();
+  assert.equal(node.updateContent, original);
+  assert.doesNotMatch(plain(node.render(60)), /8\.2s|3\.4s/);
+  assert.equal(m.content[0].thinking, '分析中文');
+});
+
+test('native tool blocks use distinct live clocks and persisted final duration', () => {
+  const clock = new BlockClock();
+  clock.tools.set('a', { start: 1000 });
+  clock.tools.set('b', { start: 2000 });
+  const a = new ToolExecutionComponent('bash', 'a', { command: 'pwd' }, {}, undefined, { requestRender() {} }, '/tmp');
+  const b = new ToolExecutionComponent('read', 'b', { path: 'x' }, {}, undefined, { requestRender() {} }, '/tmp');
+  const adapter = blockTimingAdapter(clock, s => s, () => 3500);
+  adapter.update({ children: [a, b] });
+  assert.match(plain(a.render(60)), /2\.5s/);
+  assert.match(plain(b.render(60)), /1\.5s/);
+  a.updateResult({ content: [{ type: 'text', text: 'done' }], durationMs: 1234, isError: false });
+  clock.clear();
+  assert.match(plain(a.render(60)), /1\.2s/);
+  a.setExpanded(true);
+  assert.match(plain(a.render(60)), /1\.2s/);
+  assert.doesNotMatch(plain(b.render(60)), /\d\.\ds/);
+  adapter.dispose();
+  assert.doesNotMatch(plain(a.render(60)), /1\.2s/);
+});
+
+test('consecutive thinking blocks group their own durations; old messages remain unchanged', () => {
+  const m = message();
+  m.content.splice(1, 0, { type: 'thinking', thinking: '第二段' });
+  const clock = new BlockClock();
+  clock.update(messageKey(m), 'thinking_start', 0, 0);
+  clock.update(messageKey(m), 'thinking_end', 0, 1000);
+  clock.update(messageKey(m), 'thinking_start', 1, 1000);
+  clock.finish(messageKey(m), 3000);
+  const node = new AssistantMessageComponent(m);
+  const adapter = blockTimingAdapter(clock, s => s);
+  adapter.update({ children: [node] });
+  assert.match(plain(node.render(60)), /Thinking +3\.0s/);
+  assert.doesNotMatch(plain(node.render(60)), /Output/);
+  adapter.dispose();
+});
+
+test('lifecycle persists only custom data, restores branch and cleans up', () => {
+  const handlers = new Map();
+  const entries = [];
+  const pi = { on: (name, fn) => handlers.set(name, fn), appendEntry: (customType, data) => entries.push({ type: 'custom', customType, data }) };
+  const controller = register(pi);
+  const ctx = { mode: 'tui', ui: { theme: { fg: (_, s) => s } }, sessionManager: { getBranch: () => entries } };
+  const m = message();
+  const node = new AssistantMessageComponent(m);
+  const tree = { children: [node], requestRender() {} };
+  handlers.get('session_start')({}, ctx);
+  controller.mount(tree, ctx);
+  handlers.get('agent_start')({}, ctx);
+  handlers.get('message_update')({ message: m, assistantMessageEvent: { type: 'text_start', contentIndex: 1 } });
+  handlers.get('message_end')({ message: m });
+  handlers.get('agent_end')();
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].customType, 'magic-ui:block-timing');
+  assert.match(plain(node.render(60)), /Output +0\.0s/);
+  handlers.get('session_switch')({}, ctx);
+  assert.match(plain(node.render(60)), /Output +0\.0s/);
+  entries.length = 0;
+  handlers.get('session_tree')({}, ctx);
+  assert.doesNotMatch(plain(node.render(60)), /Output/);
+  handlers.get('session_shutdown')();
+});

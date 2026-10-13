@@ -28,6 +28,7 @@ Only `magic-ui/index.ts` is discovered as an extension; other modules are import
 - `header.ts`: startup wordmark and resource-list presentation.
 - `editor-footer.ts`: editor, footer, selection-card renderer, working indicator and session info.
 - `compact.ts`: folded thinking and bash call display (does not change command execution).
+- `block-timing.ts`: right-aligned, dim per-block durations for Thinking, Output and tool calls.
 - `questionnaire.ts`: generic `questionnaire` tool with `single`, `multiple`, `confirm` questions. Defaults are not consent; `cancelled: true` always returns empty `answers`. Not a credential input form.
 - `quota.ts`: `/quota` command and optional quota snapshot status.
 
@@ -47,6 +48,19 @@ Run its formatting, narrow-width, and adapter lifecycle tests with:
 ```sh
 node --test tests/extensions-list.test.mjs
 ```
+
+`magic-ui/block-timing.ts` adds a dim right-aligned duration to each assistant content
+block's header and each tool call's first visible line. Live times refresh once per
+second; finalized times remain visible when collapsed or expanded. Thinking and
+Output measure locally observed stream start/end events, **not provider-internal
+compute time**; initial response/network wait is excluded. Adjacent thinking blocks
+that Pi renders together show their summed durations. Missing historical timings
+are not estimated. Assistant timings persist as custom session entries excluded
+from model context; tools use Pi's persisted `durationMs`. Branch switches restore
+only that branch's timing data. Pi 1.1 has no assistant-block renderer hook, so a
+guarded instance adapter is mounted through the header and restored on disposal;
+no package files or global prototypes are changed. Test after Pi upgrades:
+`node --test tests/block-timing.test.mjs`.
 
 `magic-ui/quota.ts` performs no background polling. `/quota` only queries the official
 legacy Codex usage endpoint for an active `openai-codex` model using OAuth, with a

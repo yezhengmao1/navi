@@ -76,10 +76,14 @@ export default function (pi: ExtensionAPI) {
 		return compactThinking(markdown);
 	});
 
+	const bash = createBashToolDefinition(process.cwd());
 	pi.registerTool({
-		// Keep the built-in schema, execution, and result renderer; only replace
-		// the call title.
-		...createBashToolDefinition(process.cwd()),
+		// Keep native execution/output rendering. Block timing owns the duration
+		// label; don't add the native duplicate footer (or touch command output).
+		...bash,
+		renderResult(result, options, theme, context) {
+			return bash.renderResult!(result, options, theme, { ...context, durationMs: undefined });
+		},
 
 		renderCall(args, theme, context) {
 			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
@@ -94,7 +98,7 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			const timeout = (args as { timeout?: number }).timeout;
-			if (timeout !== undefined) {
+			if (typeof timeout === "number" && Number.isFinite(timeout) && timeout > 0) {
 				content += theme.fg("dim", ` (timeout ${timeout}s)`);
 			}
 
