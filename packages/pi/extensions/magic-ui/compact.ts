@@ -62,11 +62,21 @@ export function compactText(value: string, maxWidth: number): CompactText {
 }
 
 export function compactThinking(markdown: string, keepLines = THINKING_TAIL_LINES): string {
-	const lines = markdown.split("\n");
-	if (lines.length <= keepLines) return markdown;
-
-	const omitted = lines.length - keepLines;
-	const tail = lines.slice(-keepLines).join("\n");
+	// Keep the legacy slice semantics for unusual explicit limits. The normal
+	// path counts separators without allocating every historical line.
+	if (!Number.isInteger(keepLines) || keepLines < 1) {
+		const lines = markdown.split("\n");
+		if (lines.length <= keepLines) return markdown;
+		const omitted = lines.length - keepLines;
+		return `⋯ ${omitted} earlier thinking ${omitted === 1 ? "line" : "lines"} folded ⋯\n\n${lines.slice(-keepLines).join("\n")}`;
+	}
+	let lineCount = 1;
+	for (let at = markdown.indexOf("\n"); at !== -1; at = markdown.indexOf("\n", at + 1)) lineCount++;
+	if (lineCount <= keepLines) return markdown;
+	let boundary = markdown.length;
+	for (let i = 0; i < keepLines; i++) boundary = markdown.lastIndexOf("\n", boundary - 1);
+	const omitted = lineCount - keepLines;
+	const tail = markdown.slice(boundary + 1);
 	return `⋯ ${omitted} earlier thinking ${omitted === 1 ? "line" : "lines"} folded ⋯\n\n${tail}`;
 }
 

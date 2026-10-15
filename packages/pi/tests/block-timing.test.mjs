@@ -13,6 +13,27 @@ const plain = lines => lines.map(tui.stripTerminalSequences).join('\n');
 const message = () => ({ role: 'assistant', provider: 'test', model: 'test', timestamp: 1,
   content: [{ type: 'thinking', thinking: '分析中文' }, { type: 'text', text: 'Hello world' }], stopReason: 'stop' });
 
+test('discovery skips previously decorated content but updateContent decorates new children', () => {
+  let reads = 0;
+  const m = { ...message(), get content() { reads++; return [{ type: 'text', text: 'hello' }]; } };
+  const node = {
+    lastMessage: m,
+    contentContainer: { children: [{}, { render: () => ['hello'] }] },
+    updateContent() { this.contentContainer.children = [{}, { render: () => ['new'] }]; },
+  };
+  const adapter = blockTimingAdapter(new BlockClock(), s => s);
+  const root = { children: [node] };
+  adapter.update(root);
+  assert.ok(reads > 0);
+  reads = 0;
+  for (let i = 0; i < 100; i++) adapter.update(root);
+  assert.equal(reads, 0, 'unchanged history must not be scanned again');
+  node.updateContent();
+  assert.ok(reads > 0);
+  assert.match(node.contentContainer.children[1].render(80).join('\n'), /Output/);
+  adapter.dispose();
+});
+
 test('file tool titles lose OSC 8 links without changing colors, output or other tools', () => {
   for (const terminator of ['\x07', '\x1b\\']) {
     for (const toolName of ['read', 'edit', 'write', 'bash']) {
@@ -28,6 +49,63 @@ test('file tool titles lose OSC 8 links without changing colors, output or other
       assert.equal(node.render, original);
     }
   }
+});
+
+test('turn completion closes only active spans, preserves completed history and clears tracking', () => {
+  const clock = new BlockClock();
+  // Completed history must never be walked at agent_end, even in huge sessions.
+  for (let i = 0; i < 10_000; i++) clock.messages.set(`old-${i}`, {
+    values() { throw new Error('historical scan'); },
+  });
+  clock.update('current', 'thinking_start', 0, 10);
+  clock.update('current', 'text_start', 1, 20);
+  clock.startTool('done', 10); clock.finishTool('done', 20, 8);
+  clock.startTool('running', 15);
+  clock.finishActive(50);
+  assert.equal(clock.elapsed('current', [0], 100), 10);
+  assert.equal(clock.elapsed('current', [1], 100), 30);
+  assert.deepEqual(clock.tools.get('done'), { start: 10, end: 20, duration: 8 });
+  assert.equal(clock.tools.get('running').end, 50);
+  clock.finishActive(100);
+  assert.equal(clock.tools.get('running').end, 50);
+  clock.finishTool('running', 110, 95);
+  assert.deepEqual(clock.tools.get('running'), { start: 15, end: 110, duration: 95 }, 'late final execution timing overrides estimated close');
+  const restored = { kind: 'text', start: 60 };
+  clock.restoreMessage('restored', new Map([[0, restored]]));
+  clock.finishActive(80);
+  assert.equal(restored.end, 80);
+  clock.startTool('orphan', 90);
+  const orphan = clock.tools.get('orphan');
+  clock.clear(); clock.finishActive(100);
+  assert.equal(orphan.end, undefined);
+});
+
+test('stream deltas and finish only inspect active blocks, not completed content in the same message', () => {
+  const clock = new BlockClock();
+  for (let i = 0; i < 5000; i++) clock.update('long', 'text_start', i, i);
+  const history = clock.messages.get('long');
+  history[Symbol.iterator] = history.values = () => { throw new Error('historical block traversal'); };
+  for (let i = 0; i < 100; i++) clock.update('long', 'text_delta', 4999, 5000 + i);
+  clock.update('long', 'thinking_start', 5000, 5100);
+  assert.equal(clock.elapsed('long', [4999, 5000], 5200), 201);
+  clock.finish('long', 5300);
+  assert.equal(clock.elapsed('long', [5000], 9000), 200);
+  assert.equal(clock.elapsed('missing', [0], 9000), undefined);
+});
+
+test('restored simultaneous active blocks close correctly on transitions and replacement', () => {
+  const clock = new BlockClock();
+  const a = { kind: 'thinking', start: 10 }, b = { kind: 'text', start: 20 };
+  clock.restoreMessage('a', new Map([[0, a], [1, b]]));
+  clock.update('a', 'text_delta', 1, 30);
+  assert.equal(a.end, 30); assert.equal(b.end, undefined);
+  clock.restoreMessage('a', new Map([[2, { kind: 'text', start: 40 }]]));
+  clock.finishActive(50);
+  assert.equal(b.end, undefined, 'replacement must untrack old open spans');
+  assert.equal(clock.elapsed('a', [2], 100), 10);
+  clock.update('a', 'text_start', 3, 60);
+  clock.clear(); clock.finishActive(80);
+  assert.equal(clock.elapsed('a', [3], 100), undefined);
 });
 
 test('separate block clocks exclude initial waiting, close on end/transition, freeze on abort', () => {

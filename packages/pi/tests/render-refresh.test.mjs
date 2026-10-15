@@ -45,6 +45,7 @@ test('streaming deltas skip history scans; late tools are discovered and detache
   controller.mount(tree, ctx);
   await sleep(70);
   const baseline = scans;
+  const baselineRenders = renders;
   const m = { role: 'assistant', provider: 'test', model: 'test', timestamp: 1 };
   for (let i = 0; i < 100; i++) {
     emit('message_update', { message: m, assistantMessageEvent: { type: 'text_delta', contentIndex: 0 } });
@@ -52,6 +53,11 @@ test('streaming deltas skip history scans; late tools are discovered and detache
   }
   await sleep(70);
   assert.equal(scans, baseline);
+  assert.equal(renders, baselineRenders, 'native deltas must not request duplicate extension repaints');
+  // Structural events still schedule discovery/repaint.
+  emit('message_update', { message: m, assistantMessageEvent: { type: 'text_start', contentIndex: 1 } });
+  await sleep(70);
+  assert.ok(renders > baselineRenders);
   const node = { toolName: 'read', toolCallId: 'late', updateResult() {}, render: () => ['read file'] };
   const original = node.render;
   // Extension event arrives before the native component is mounted.
@@ -97,6 +103,41 @@ test('header caches layout and resource discovery; resize, expansion and theme c
   ctx.ui.theme = { ...themes.theme, fg: (_, text) => text };
   assert.notDeepEqual(component.render(80), wider);
   component.dispose();
+});
+
+test('footer renders cached context and invalidates it at session/model/message boundaries', async () => {
+  const original = DailyTokenCounter.prototype.read;
+  DailyTokenCounter.prototype.read = async () => 0;
+  let footer, widget, reads = 0;
+  const { emit } = harness(registerFooter);
+  const tree = { requestRender() {} };
+  const ctx = { mode: 'tui', getContextUsage() {
+    reads++; return { tokens: reads, percent: reads, contextWindow: 100 };
+  }, ui: {
+    setWorkingMessage() {}, setEditorComponent() {},
+    setWidget(_name, factory) { widget = factory(tree, themes.theme); },
+    setFooter(factory) { footer = factory(tree, themes.theme, { getExtensionStatuses: () => new Map() }); },
+  }, sessionManager: { getSessionDir: () => '/tmp/unused', getBranch: () => [] } };
+  try {
+    emit('session_start', {}, ctx); await sleep(10);
+    assert.equal(reads, 1);
+    for (let i = 0; i < 100; i++) widget.render(80);
+    assert.equal(reads, 1, 'render must not recalculate session projections');
+    for (const name of ['session_switch', 'session_tree', 'session_compact', 'model_select',
+      'message_start', 'message_end', 'agent_end', 'before_provider_request']) {
+      const before = reads;
+      emit(name, { message: { role: 'user' } }, ctx);
+      await sleep(10);
+      assert.equal(reads, before + 1, name);
+    }
+    const before = reads;
+    for (let i = 0; i < 100; i++) emit('message_update', { assistantMessageEvent: { type: 'text_delta' } }, ctx);
+    await sleep(10);
+    assert.equal(reads, before);
+  } finally {
+    footer?.dispose(); emit('session_shutdown', {}, ctx);
+    DailyTokenCounter.prototype.read = original;
+  }
 });
 
 test('usage poll repaints only when the value changes and ignores in-flight results after disposal', async () => {

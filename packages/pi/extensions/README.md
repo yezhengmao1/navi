@@ -60,6 +60,11 @@ are not estimated. Assistant timings persist as custom session entries excluded
 from model context; tools use Pi's persisted `durationMs`. Branch switches restore
 only that branch's timing data. Tool timing labels and their padding inherit the
 native pending/success/error background, without inheriting bold title styling.
+Turn completion closes only tracked active spans, not the entire timing history.
+Streaming clock updates inspect only active blocks in that message, not all prior
+content blocks; elapsed-time rendering avoids intermediate arrays.
+Thinking folding counts newline positions and slices the retained tail without
+allocating an array of every historical line.
 
 When safety-guard triggers AI review or a confirmation dialog, the same tool header
 shows `审查 1.2s · 等待确认 5.3s · 执行 0.1s`. Active stages update live; denied
@@ -112,7 +117,21 @@ so upstream session IDs remain distinct from response IDs and the local pi ID.
 
 The footer shows today’s token usage across local pi sessions (input, output, and
 cache tokens, using the machine’s local date). Copied branch entries are counted
-once. Usage refreshes every 15 seconds and after responses. The speed is output
+once. The active session refreshes every 15 seconds and after responses, reading
+only appended JSONL bytes in 64 KiB chunks. Usage keys/counts are normalized once
+when read. `usage-ledger.ts` maintains the deduplicated total incrementally:
+appends update affected keys only, with reference counts for duplicates and stable
+file precedence when a file is replaced. Deletion removes only that file's
+contributions. The additional per-key indexes trade some retained memory for
+avoiding global scans; raw usage history arrays are no longer retained.
+An unfinished JSON object is only tentatively parsed if its last non-whitespace
+byte is `}`, avoiding repeated concatenation/decoding of most large partial strings.
+Global discovery/stat runs at most once
+per 60 seconds (also on root/date changes), so other sessions' usage can lag by
+about a minute. Context usage is cached outside render(), invalidated at
+session/model/message boundaries, with a 15-second fallback refresh. Streaming
+deltas rely on Pi's native repaint; only structural changes and live clocks add
+extension redraw requests. The speed is output
 tokens per second for the latest completed response, measured from the provider
 request including first-token latency; it shows `—` until measured. Speed color
 interpolates through the active theme's accent (0 tok/s), warning (75), and
@@ -121,6 +140,11 @@ The `magic` dark theme uses a Sichuan University-inspired warm-red palette:
 vermilion accents, warm gold highlights, and ivory text. Thinking-level borders
 progress from muted warm red to pale gold; green remains reserved for success
 and added diff lines. Select `magic` in `/settings` after installing the theme.
+
+The `@@` / `/mention` session list uses a single-scope, 10-second metadata cache
+and coalesces concurrent loads. It discards transcript search text, clears on
+session changes/renames/shutdown, and reloads on cache misses or abbreviated IDs
+to check uniqueness against newly created sessions.
 
 The working indicator follows stream events: `Thinking` for reasoning,
 `Responding` for answer text, `Preparing tool` for tool arguments, and
@@ -136,6 +160,18 @@ Run all included tests with Node, optionally setting `PI_PACKAGE_ROOT` to the in
 ```sh
 node --test tests/*.test.mjs
 ```
+
+For offline synthetic performance comparisons, snapshot the previous `magic-ui/`
+directory before updating, then run:
+
+```sh
+MAGIC_UI_BASELINE=/tmp/magic-ui-before node --expose-gc tests/magic-ui-bench.mjs
+```
+
+The benchmark checks matching results and reports median elapsed time for large
+thinking blocks, historical timing cleanup, streaming clock updates, token
+aggregation, and partial JSONL records. With `--expose-gc` it also estimates retained
+usage-cache heap. These are microbenchmarks, not terminal frame-latency measurements.
 
 The tests default to the installation selected by `~/.pi/agent/install/current-version`.
 Selection-card rendering and event lifecycle tests are in `tests/magic-selection.test.mjs`.

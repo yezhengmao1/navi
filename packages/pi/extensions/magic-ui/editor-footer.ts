@@ -6,7 +6,7 @@
  * never receive animation artifacts or pi internal cursor markers.
  */
 
-import { readdir, readFile, stat } from "node:fs/promises";
+import { open, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
@@ -33,6 +33,8 @@ import {
 } from "@earendil-works/pi-tui";
 
 import { staticMessageBackground, paintStaticMessage } from "./message-flow.js";
+import { contextUsageCache } from "./context-usage.js";
+import { UsageLedger, type UsageRecord } from "./usage-ledger.js";
 
 const PLACEHOLDER = "输入消息…";
 const PROMPT_WIDTH = 2;
@@ -141,10 +143,43 @@ export function dailyUsage(records: any[], now = new Date()): number {
 	return total;
 }
 
-/** Read changed files only; never perform filesystem I/O inside render(). */
+/** Necessary (not sufficient) condition for a complete JSONL session object.
+ * Inspect only the tail; avoid concatenating/decoding a large unfinished record.
+ */
+export function mayBeCompleteObject(chunks: Buffer[]): boolean {
+	for (let c = chunks.length - 1; c >= 0; c--) {
+		for (let i = chunks[c]!.length - 1; i >= 0; i--) {
+			const byte = chunks[c]![i];
+			if (byte !== 32 && byte !== 9 && byte !== 10 && byte !== 13) return byte === 125;
+		}
+	}
+	return false;
+}
+
+type UsageFile = {
+	signature: string;
+	identity: string;
+	offset: number;
+	pending: Buffer[];
+	/** A valid final JSON record without a newline is provisional until appended. */
+	tail?: UsageRecord;
+};
+
+/** Incremental, bounded reads; never perform filesystem I/O inside render(). */
 export class DailyTokenCounter {
-	private cache = new Map<string, { signature: string; records: any[] }>();
-	async read(roots: string[], now = new Date()): Promise<number> {
+	private cache = new Map<string, UsageFile>();
+	private day = "";
+	private ledger = new UsageLedger();
+	private discoveryKey = "";
+	private discoveredAt = -Infinity;
+	async read(roots: string[], now = new Date(), options: { discoveryIntervalMs?: number; activeFile?: string } = {}): Promise<number> {
+		const day = localDay(now);
+		if (day !== this.day) {
+			this.cache.clear(); this.ledger.clear(); this.day = day; this.discoveredAt = -Infinity;
+		}
+		const key = JSON.stringify([...new Set(roots)].sort());
+		const discover = key !== this.discoveryKey || now.getTime() < this.discoveredAt
+			|| now.getTime() - this.discoveredAt >= (options.discoveryIntervalMs ?? 0);
 		const files = new Set<string>();
 		const visit = async (directory: string) => {
 			let entries;
@@ -156,30 +191,77 @@ export class DailyTokenCounter {
 				else if (entry.isFile() && entry.name.endsWith(".jsonl")) files.add(path);
 			}
 		};
-		for (const root of new Set(roots)) await visit(root);
+		if (discover) for (const root of new Set(roots)) await visit(root);
+		// Fast refreshes only stat/read the active session; other sessions are eventual.
+		if (options.activeFile) files.add(options.activeFile);
 		const midnight = new Date(now); midnight.setHours(0, 0, 0, 0);
 		for (const path of files) {
 			try {
 				const info = await stat(path);
-				if (info.mtimeMs < midnight.getTime()) { this.cache.delete(path); continue; }
-				const signature = `${info.mtimeMs}:${info.size}`;
-				if (this.cache.get(path)?.signature === signature) continue;
-				const records = [];
-				for (const line of (await readFile(path, "utf8")).split("\n")) {
-					try {
-						const entry = JSON.parse(line);
-						if (entry.type === "message" && entry.message?.role === "assistant") {
-							const { timestamp, provider, model, usage } = entry.message;
-							records.push({ id: entry.id, type: entry.type, timestamp: entry.timestamp,
-								message: { role: "assistant", timestamp, provider, model, usage } });
-						}
-					} catch { /* A concurrently appended last line may be incomplete. */ }
+				if (info.mtimeMs < midnight.getTime()) {
+					this.cache.delete(path); this.ledger.delete(path);
+					continue;
 				}
-				this.cache.set(path, { signature, records });
-			} catch (error: any) { if (error.code === "ENOENT") this.cache.delete(path); else throw error; }
+				const signatureOf = (s: typeof info) => `${s.dev}:${s.ino}:${s.mtimeMs}:${s.ctimeMs}:${s.size}`;
+				const previous = this.cache.get(path);
+				if (previous?.signature === signatureOf(info)) continue;
+				const file = await open(path, "r");
+				try {
+					// Stat the opened file too: it may have been replaced since discovery.
+					const snapshot = await file.stat();
+					const identity = `${snapshot.dev}:${snapshot.ino}`;
+					const append = previous?.identity === identity && snapshot.size > previous.offset;
+					// Stage only new usage records. Commit after all reads succeed, without
+					// copying historical usage for tool-output-only appends.
+					const records: UsageRecord[] = [];
+					let offset = append ? previous.offset : 0;
+					let pending = append ? [...previous.pending] : [];
+					const consume = (line: Buffer) => {
+						try {
+							const entry = JSON.parse(line.toString("utf8"));
+							if (entry.type !== "message" || entry.message?.role !== "assistant") return;
+							const { timestamp, provider, model, usage } = entry.message;
+							if (localDay(new Date(timestamp ?? entry.timestamp)) !== day) return;
+							// Normalize once at ingestion, not on every later global aggregation.
+							const key = JSON.stringify([entry.id, timestamp ?? entry.timestamp, provider, model]);
+							const count = usage?.totalTokens ?? ((usage?.input ?? 0) + (usage?.output ?? 0)
+								+ (usage?.cacheRead ?? 0) + (usage?.cacheWrite ?? 0));
+							records.push({ key, count: Number.isFinite(count) && count >= 0 ? count : 0 });
+						} catch { /* Ignore malformed complete lines; retain incomplete lines below. */ }
+					};
+					while (offset < snapshot.size) {
+						// Yield between chunks, and avoid decoding split UTF-8 characters.
+						const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, snapshot.size - offset));
+						const { bytesRead } = await file.read(buffer, 0, buffer.length, offset);
+						if (!bytesRead) throw new Error("Session file truncated during usage scan");
+						offset += bytesRead;
+						let start = 0;
+						for (let end = buffer.indexOf(10); end >= 0 && end < bytesRead; end = buffer.indexOf(10, start)) {
+							const part = buffer.subarray(start, end);
+							consume(pending.length ? Buffer.concat([...pending, part]) : part);
+							pending = [];
+							start = end + 1;
+						}
+						if (start < bytesRead) pending.push(Buffer.from(buffer.subarray(start, bytesRead)));
+					}
+					const completeCount = records.length;
+					if (mayBeCompleteObject(pending)) consume(Buffer.concat(pending));
+					const tail = records[completeCount];
+					if (append) this.ledger.append(path, records, previous.tail);
+					else this.ledger.replace(path, records);
+					this.cache.set(path, { signature: signatureOf(snapshot), identity, offset, pending, tail });
+				} finally { await file.close(); }
+			} catch (error: any) {
+				if (error.code === "ENOENT") { this.cache.delete(path); this.ledger.delete(path); }
+				else throw error;
+			}
 		}
-		for (const path of this.cache.keys()) if (!files.has(path)) this.cache.delete(path);
-		return dailyUsage([...this.cache.values()].flatMap(value => value.records), now);
+		if (discover) {
+			for (const path of this.cache.keys()) if (!files.has(path)) { this.cache.delete(path); this.ledger.delete(path); }
+			this.discoveryKey = key;
+			this.discoveredAt = now.getTime();
+		}
+		return this.ledger.total;
 	}
 }
 
@@ -280,6 +362,17 @@ export default function (pi: ExtensionAPI) {
 	let responseStart: number | undefined;
 	let speed: number | undefined;
 	let refreshUsage: (() => void) | undefined;
+	let refreshContext: ((ctx: ExtensionContext) => void) | undefined;
+	// Include context edits/loadout changes before requests and non-assistant messages.
+	const invalidateContext = (_event: unknown, ctx: ExtensionContext) => refreshContext?.(ctx);
+	pi.on("session_switch", invalidateContext);
+	pi.on("session_tree", invalidateContext);
+	pi.on("session_compact", invalidateContext);
+	pi.on("model_select", invalidateContext);
+	pi.on("message_start", invalidateContext);
+	pi.on("message_end", invalidateContext);
+	pi.on("agent_end", invalidateContext);
+	pi.on("before_provider_request", invalidateContext);
 	pi.on("before_provider_request", () => { responseStart = performance.now(); });
 	pi.on("message_start", (event) => {
 		if (event.message.role === "assistant") responseStart ??= performance.now();
@@ -458,6 +551,9 @@ export default function (pi: ExtensionAPI) {
 
 		ctx.ui.setFooter((tui, theme, _footerData) => {
 			const counter = new DailyTokenCounter();
+			const context = contextUsageCache(() => tui.requestRender());
+			refreshContext = context.invalidate;
+			context.invalidate(ctx);
 			let today: number | undefined;
 			let busy = false;
 			let disposed = false;
@@ -473,7 +569,10 @@ export default function (pi: ExtensionAPI) {
 				busy = true;
 				let next: number | undefined;
 				try {
-					next = await counter.read([join(getAgentDir(), "sessions"), ctx.sessionManager.getSessionDir()]);
+					next = await counter.read([join(getAgentDir(), "sessions"), ctx.sessionManager.getSessionDir()], new Date(), {
+						discoveryIntervalMs: 60_000,
+						activeFile: ctx.sessionManager.getSessionFile?.(),
+					});
 				} catch { next = undefined; }
 				finally { busy = false; }
 				if (!disposed && next !== today) {
@@ -483,12 +582,13 @@ export default function (pi: ExtensionAPI) {
 			};
 			refreshUsage = refresh;
 			void refresh();
-			const timer = setInterval(refresh, 15_000);
+			// Safety refresh also covers changes without a dedicated UI lifecycle event.
+			const timer = setInterval(() => { void refresh(); context.invalidate(ctx); }, 15_000);
 			timer.unref();
 			ctx.ui.setWidget("magic-stats", (_tui, widgetTheme) => ({
 				invalidate() {},
 				render(width: number): string[] {
-					const usage = ctx.getContextUsage();
+					const usage = context.get();
 					const window = usage?.contextWindow ?? ctx.model?.contextWindow ?? 0;
 					const percent = usage?.percent == null ? "?" : `${usage.percent.toFixed(1)}%`;
 					const contextColor = (usage?.percent ?? 0) > 90 ? "error"
@@ -527,6 +627,8 @@ export default function (pi: ExtensionAPI) {
 			return {
 				dispose() {
 					disposed = true;
+					context.dispose();
+					if (refreshContext === context.invalidate) refreshContext = undefined;
 					unsubscribeSubagents();
 					clearInterval(timer);
 					if (refreshUsage === refresh) refreshUsage = undefined;

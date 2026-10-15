@@ -7,7 +7,8 @@ import { renderRefresh } from "./render-refresh.js";
 
 const ENTRY = "magic-ui:block-timing";
 const GUARD_ENTRY = "safety-guard:timing";
-type Span = { kind: "thinking" | "text"; start: number; end?: number };
+type TimedSpan = { start: number; end?: number };
+type Span = TimedSpan & { kind: "thinking" | "text" };
 type MessageKey = { provider?: string; model?: string; timestamp?: number };
 export const messageKey = (m: MessageKey) => JSON.stringify([m.provider, m.model, m.timestamp]);
 export const durationLabel = (ms: number) => ms < 60_000 ? `${(Math.max(0, ms) / 1000).toFixed(1)}s`
@@ -18,27 +19,71 @@ export class BlockClock {
 	messages = new Map<string, Map<number, Span>>();
 	tools = new Map<string, { start: number; end?: number; duration?: number }>();
 	guards = new Map<string, GuardTiming>();
+	private active = new Set<TimedSpan>();
+	private activeBlocks = new Map<string, Map<number, Span>>();
+	private closeBlock(key: string, index: number, span: Span, now: number) {
+		span.end ??= now; this.active.delete(span);
+		const blocks = this.activeBlocks.get(key);
+		blocks?.delete(index);
+		if (blocks?.size === 0) this.activeBlocks.delete(key);
+	}
+	private trackBlock(key: string, index: number, span: Span) {
+		let blocks = this.activeBlocks.get(key);
+		if (!blocks) this.activeBlocks.set(key, blocks = new Map());
+		blocks.set(index, span); this.active.add(span);
+	}
+	startTool(id: string, now: number) {
+		const previous = this.tools.get(id);
+		if (previous) this.active.delete(previous);
+		const span = { start: now };
+		this.tools.set(id, span); this.active.add(span);
+	}
+	finishTool(id: string, now: number, duration?: number) {
+		const span = this.tools.get(id);
+		if (span) { span.end = now; this.active.delete(span); span.duration = duration; }
+	}
+	restoreMessage(key: string, blocks: Map<number, Span>) {
+		for (const span of this.activeBlocks.get(key)?.values() ?? []) this.active.delete(span);
+		this.activeBlocks.delete(key);
+		this.messages.set(key, blocks);
+		for (const [index, span] of blocks) if (span.end === undefined) this.trackBlock(key, index, span);
+	}
+	finishActive(now: number) {
+		for (const span of this.active) span.end ??= now;
+		this.active.clear(); this.activeBlocks.clear();
+	}
 	update(key: string, type: string, index: number, now: number) {
 		const kind = type.startsWith("thinking_") ? "thinking" : type.startsWith("text_") ? "text" : undefined;
 		if (!kind || !Number.isInteger(index)) return;
 		let blocks = this.messages.get(key);
 		if (!blocks) this.messages.set(key, blocks = new Map());
 		if (type.endsWith("_start") || type.endsWith("_delta")) {
-			for (const [other, span] of blocks) if (other !== index) span.end ??= now;
-			if (!blocks.has(index)) blocks.set(index, { kind, start: now });
+			// Usually one active block; completed content must not be visited per delta.
+			for (const [other, span] of this.activeBlocks.get(key) ?? []) {
+				if (other !== index) this.closeBlock(key, other, span, now);
+			}
+			if (!blocks.has(index)) {
+				const span: Span = { kind, start: now };
+				blocks.set(index, span); this.trackBlock(key, index, span);
+			}
 		} else if (type.endsWith("_end")) {
 			const span = blocks.get(index);
-			if (span) span.end ??= now;
+			if (span) this.closeBlock(key, index, span, now);
 		}
 	}
 	finish(key: string, now: number) {
-		for (const span of this.messages.get(key)?.values() ?? []) span.end ??= now;
+		for (const [index, span] of this.activeBlocks.get(key) ?? []) this.closeBlock(key, index, span, now);
 	}
 	elapsed(key: string, indices: number[], now: number): number | undefined {
-		const spans = indices.map(i => this.messages.get(key)?.get(i)).filter((v): v is Span => !!v);
-		return spans.length ? spans.reduce((sum, s) => sum + Math.max(0, (s.end ?? now) - s.start), 0) : undefined;
+		const blocks = this.messages.get(key);
+		let total: number | undefined;
+		for (const index of indices) {
+			const span = blocks?.get(index);
+			if (span) total = (total ?? 0) + Math.max(0, (span.end ?? now) - span.start);
+		}
+		return total;
 	}
-	clear() { this.messages.clear(); this.tools.clear(); this.guards.clear(); }
+	clear() { this.active.clear(); this.activeBlocks.clear(); this.messages.clear(); this.tools.clear(); this.guards.clear(); }
 }
 
 export function guardTimingLabel(guard: GuardTiming | undefined, executionMs: number | undefined, now: number): string | undefined {
@@ -143,8 +188,10 @@ export function blockTimingAdapter(clock: BlockClock, dim: (s: string) => string
 						const wrapped = function (this: any, ...args: any[]) { original.apply(this, args); decorate(this); };
 						node.updateContent = wrapped;
 						restores.set(node, () => { if (node.updateContent === wrapped) { node.updateContent = original; original.call(node, node.lastMessage); } });
+						decorate(node);
 					}
-					decorate(node);
+					// Already mounted nodes are decorated by their updateContent wrapper.
+					// Do not rescan historical content blocks at every tool/message boundary.
 					continue;
 				}
 				if (typeof node.toolCallId === "string" && typeof node.updateResult === "function" && typeof node.render === "function") {
@@ -212,7 +259,7 @@ export default function registerBlockTiming(pi: ExtensionAPI) {
 			}
 			if (entry.customType !== ENTRY) continue;
 			const data = entry.data as { key?: string; blocks?: [number, Span][] };
-			if (typeof data?.key === "string" && Array.isArray(data.blocks)) clock.messages.set(data.key, new Map(data.blocks));
+			if (typeof data?.key === "string" && Array.isArray(data.blocks)) clock.restoreMessage(data.key, new Map(data.blocks));
 		}
 		if (root) adapter?.update(root);
 		redraw();
@@ -230,9 +277,10 @@ export default function registerBlockTiming(pi: ExtensionAPI) {
 		if (event.message.role !== "assistant") return;
 		const e = event.assistantMessageEvent;
 		if ("contentIndex" in e) clock.update(messageKey(event.message), e.type, e.contentIndex, performance.now());
-		// Patched updateContent() decorates replacement children directly. Deltas
-		// only need a coalesced repaint, not another historical-tree discovery.
-		redraw(!e.type.endsWith("_delta"));
+		// Native streaming already requests a render after updateContent(), whose
+		// wrapper decorates replacement children. Deltas need no extra repaint.
+		// Keep structural discovery and the live clock's independent 1 Hz timer.
+		if (!e.type.endsWith("_delta")) redraw();
 	});
 	pi.on("message_end", (event) => {
 		if (event.message.role !== "assistant") return;
@@ -242,16 +290,13 @@ export default function registerBlockTiming(pi: ExtensionAPI) {
 		if (blocks?.size) pi.appendEntry(ENTRY, { key, blocks: [...blocks] });
 		redraw();
 	});
-	pi.on("tool_execution_start", (event) => { clock.tools.set(event.toolCallId, { start: performance.now() }); redraw(); });
+	pi.on("tool_execution_start", (event) => { clock.startTool(event.toolCallId, performance.now()); redraw(); });
 	pi.on("tool_execution_end", (event) => {
-		const span = clock.tools.get(event.toolCallId);
-		if (span) { span.end = performance.now(); span.duration = event.durationMs; }
+		clock.finishTool(event.toolCallId, performance.now(), event.durationMs);
 		redraw();
 	});
 	pi.on("agent_end", () => {
-		const now = performance.now();
-		for (const key of clock.messages.keys()) clock.finish(key, now);
-		for (const span of clock.tools.values()) span.end ??= now;
+		clock.finishActive(performance.now());
 		stop(); redraw();
 	});
 	pi.on("session_shutdown", () => { unsubscribeGuard(); stop(); refresh.reset(); adapter?.dispose(); adapter = undefined; root = undefined; clock.clear(); });
