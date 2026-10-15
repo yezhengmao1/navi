@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { join, resolve } from 'node:path';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, lstatSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, lstatSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { root } from './helpers.mjs';
@@ -18,6 +18,10 @@ test('single magic-ui entry loads and registers generic tools/commands', async (
   assert.ok(extension.tools.has('bash'));
   assert.ok(!extension.tools.has('brief_select'));
   assert.ok(extension.commands.has('quota'));
+  assert.ok(extension.commands.has('split'));
+  assert.ok(!extension.commands.has('herdr-fork'));
+  assert.ok(!extension.commands.has('fork'), 'must not override built-in /fork');
+  assert.ok(!existsSync(join(pkg, 'extensions/herdr-fork')));
   const manifest = JSON.parse(readFileSync(join(pkg, 'package.json')));
   assert.ok(manifest.pi.extensions.includes('./extensions/magic-ui/index.ts'));
   assert.ok(!manifest.pi.extensions.some(p => p.includes('**')));
@@ -32,6 +36,8 @@ test('legacy installer copies/links the whole directory, removes old entry point
   writeFileSync(join(extensions, 'unrelated.ts'), 'keep');
   writeFileSync(join(extensions, 'clear.ts'), 'old');
   writeFileSync(join(extensions, 'command-guard.ts'), 'old');
+  mkdirSync(join(extensions, 'herdr-fork'));
+  writeFileSync(join(extensions, 'herdr-fork/index.ts'), 'old');
   const run = (...args) => {
     const r = spawnSync('bash', [join(pkg, 'install-extensions.sh'), ...args], {
       env: { ...process.env, HOME: home }, encoding: 'utf8', cwd: tmpdir(), timeout: 10000,
@@ -42,18 +48,26 @@ test('legacy installer copies/links the whole directory, removes old entry point
     run();
     assert.ok(existsSync(join(extensions, 'magic-ui/index.ts')));
     assert.ok(existsSync(join(extensions, 'magic-ui/questionnaire.ts')));
+    assert.ok(existsSync(join(extensions, 'magic-ui/herdr-fork/index.ts')));
+    assert.ok(!existsSync(join(extensions, 'herdr-fork')));
     assert.ok(!existsSync(join(extensions, 'magic-header.ts')));
     assert.ok(!existsSync(join(extensions, 'magic-ui.ts')));
     assert.ok(!existsSync(join(extensions, 'clear.ts')));
     assert.ok(!existsSync(join(extensions, 'command-guard.ts')));
     assert.ok(existsSync(join(extensions, 'safety-guard.ts')));
     assert.ok(existsSync(join(home, '.pi/agent/themes/magic.json')));
+    symlinkSync(join(pkg, 'extensions/magic-ui/herdr-fork'), join(extensions, 'herdr-fork'));
     run('--link');
+    assert.ok(!existsSync(join(extensions, 'herdr-fork')));
+    assert.ok(existsSync(join(pkg, 'extensions/magic-ui/herdr-fork/index.ts')));
     assert.ok(lstatSync(join(extensions, 'magic-ui')).isSymbolicLink());
     run();
     assert.ok(!lstatSync(join(extensions, 'magic-ui')).isSymbolicLink());
     assert.ok(existsSync(join(pkg, 'extensions/magic-ui/index.ts')), 'must not delete symlink source');
+    mkdirSync(join(extensions, 'herdr-fork'));
+    writeFileSync(join(extensions, 'herdr-fork/index.ts'), 'old');
     run('--uninstall');
+    assert.ok(!existsSync(join(extensions, 'herdr-fork')));
     assert.ok(!existsSync(join(extensions, 'magic-ui')));
     assert.ok(!existsSync(join(extensions, 'safety-guard.ts')));
     assert.equal(readFileSync(join(extensions, 'unrelated.ts'), 'utf8'), 'keep');

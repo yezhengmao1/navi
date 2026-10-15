@@ -32,7 +32,9 @@ import {
 	type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
 
-const PLACEHOLDER = "Ask Codex to do anything";
+import { staticMessageBackground, paintStaticMessage } from "./message-flow.js";
+
+const PLACEHOLDER = "输入消息…";
 const PROMPT_WIDTH = 2;
 const EDITOR_PADDING = 1;
 const FOOTER_SEPARATOR = " · ";
@@ -218,13 +220,15 @@ export interface MagicSelectionCard {
 	items: { label: string; checked?: boolean; group?: string; primary?: boolean }[];
 	cursor: number;
 	hints: string[];
+	/** Pre-rendered searchable content, kept inside the shared card frame. */
+	bodyLines?: string[];
 	warning?: string;
 	lines?: string[];
 }
 
 export function renderSelectionCard(card: MagicSelectionCard): string[] {
 	const { theme, items, cursor } = card;
-	const width = Math.max(1, Math.min(76, Math.floor(card.width)));
+	const width = Math.max(1, Math.floor(card.width));
 	const framed = width >= 6;
 	const bodyWidth = framed ? width - 4 : width;
 	const border = (text: string) => theme.fg("border", text);
@@ -235,10 +239,11 @@ export function renderSelectionCard(card: MagicSelectionCard): string[] {
 	};
 	const rule = () => border("├" + "─".repeat(width - 2) + "┤");
 	const lines: string[] = [];
-	if (framed) lines.push(border("╭" + "─".repeat(width - 2) + "╮"));
+	if (framed) lines.push(border("┌" + "─".repeat(width - 2) + "┐"));
 	lines.push(row(theme.fg("accent", theme.bold(card.title))));
 	if (card.subtitle) lines.push(row(theme.fg("muted", card.subtitle)));
 	if (framed) lines.push(rule());
+	if (card.bodyLines) lines.push(...card.bodyLines.map(line => row(line)));
 	items.forEach((item, index) => {
 		if (item.group) {
 			if (index) lines.push(row());
@@ -258,7 +263,7 @@ export function renderSelectionCard(card: MagicSelectionCard): string[] {
 	for (const hint of card.hints) {
 		for (const line of wrapTextWithAnsi(theme.fg("muted", hint), bodyWidth)) lines.push(row(line));
 	}
-	if (framed) lines.push(border("╰" + "─".repeat(width - 2) + "╯"));
+	if (framed) lines.push(border("└" + "─".repeat(width - 2) + "┘"));
 	return lines;
 }
 
@@ -340,15 +345,35 @@ export default function (pi: ExtensionAPI) {
 		resetPhase(ctx);
 		if (ctx.mode !== "tui") return;
 		class MagicEditor extends CustomEditor {
+			private renderedContentHeight = 0;
+
+			handleInput(data: string) {
+				if (data === "@") {
+					const { line, col } = this.getCursor();
+					const before = (this.getText().split("\n")[line] ?? "").slice(0, col);
+					if (/(?:^|\s)@$/.test(before)) {
+						const event = {
+							ctx, handled: false,
+							// The first @ already belongs to the native editor.
+							insert: (text: string) => { this.insertTextAtCursor(text.slice(1)); },
+						};
+						pi.events.emit("magic-ui:mention", event);
+						if (event.handled) return;
+					}
+				}
+				super.handleInput(data);
+			}
+
 			constructor(tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) {
 				super(tui, theme, keybindings, { paddingX: EDITOR_PADDING });
 			}
 
 			render(width: number): string[] {
+				this.renderedContentHeight = 0;
 				if (width < 6) return super.render(width);
 
-				// Reserve columns for the vertical edges and one-cell inner padding.
-				// The native editor wraps against the exact remaining content width.
+				// Keep one blank gutter on each side, without vertical borders.
+				// Preserve wrapping and mouse coordinates within those gutters.
 				const innerWidth = width - 2;
 				// Keep CURSOR_MARKER in the native output. It has zero display width,
 				// but the TUI needs it to position the terminal cursor for IME input.
@@ -376,7 +401,7 @@ export default function (pi: ExtensionAPI) {
 							? CURSOR_MARKER + "\x1b[7m \x1b[27m"
 							: "";
 						contentLines[index] = truncateToWidth(
-							prompt + cursor + theme.fg("muted", PLACEHOLDER),
+							prompt + cursor + theme.fg("dim", PLACEHOLDER),
 							innerWidth,
 							"",
 							true,
@@ -394,25 +419,27 @@ export default function (pi: ExtensionAPI) {
 					contentLines[index] = truncateToWidth(prefix + body, innerWidth, "", true);
 				}
 
-				const edge = (line: string) =>
-					this.borderColor("│") +
-					truncateToWidth(line, innerWidth, "", true) +
-					this.borderColor("│");
+				// A borderless color block with one background-only row above and below.
+				const background = staticMessageBackground(theme);
+				const pad = (line: string) => paintStaticMessage(
+					" " + truncateToWidth(line, innerWidth, "", true) + " ", background);
 				const autocomplete = lines
 					.slice(bottomIndex + 1)
 					.map((line) => " " + truncateToWidth(line, innerWidth, "", true) + " ");
 
-				return [
-					this.borderColor("╭") + lines[0]! + this.borderColor("╮"),
-					...contentLines.map(edge),
-					this.borderColor("╰") + lines[bottomIndex]! + this.borderColor("╯"),
-					...autocomplete,
-				];
+				this.renderedContentHeight = contentLines.length;
+				return ["", pad(""), ...contentLines.map(line => pad(line)),
+					pad(""), "", ...autocomplete];
 			}
 
 			handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+				if (!this.renderedContentHeight) return super.handleMouse(event);
+				const bottomGap = this.renderedContentHeight + 3;
+				if (event.y === 0 || event.y === bottomGap) return undefined;
 				return super.handleMouse({
 					...event,
+					// Remove exterior spacing from native editor/completion coordinates.
+					y: event.y - (event.y > bottomGap ? 2 : 1),
 					x: Math.max(0, event.x - 1),
 					width: Math.max(1, event.width - 2),
 				});
@@ -434,13 +461,25 @@ export default function (pi: ExtensionAPI) {
 			let today: number | undefined;
 			let busy = false;
 			let disposed = false;
+			let subagentLines: string[] | undefined;
+			const unsubscribeSubagents = pi.events.on("magic-ui:subagent-status", (data) => {
+				const event = data as { lines?: string[]; handled: boolean };
+				subagentLines = event.lines;
+				event.handled = true;
+				tui.requestRender();
+			});
 			const refresh = async () => {
 				if (busy || disposed) return;
 				busy = true;
+				let next: number | undefined;
 				try {
-					today = await counter.read([join(getAgentDir(), "sessions"), ctx.sessionManager.getSessionDir()]);
-				} catch { today = undefined; }
-				finally { busy = false; if (!disposed) tui.requestRender(); }
+					next = await counter.read([join(getAgentDir(), "sessions"), ctx.sessionManager.getSessionDir()]);
+				} catch { next = undefined; }
+				finally { busy = false; }
+				if (!disposed && next !== today) {
+					today = next;
+					tui.requestRender();
+				}
 			};
 			refreshUsage = refresh;
 			void refresh();
@@ -462,12 +501,33 @@ export default function (pi: ExtensionAPI) {
 					];
 					const quota = _footerData.getExtensionStatuses().get("codex-quota");
 					if (quota) items.push(widgetTheme.fg("accent", quota));
-					return wrapTextWithAnsi(items.join(widgetTheme.fg("dim", FOOTER_SEPARATOR)), Math.max(1, width));
+					const statusLines: string[] = [];
+					if (subagentLines?.length) {
+						statusLines.push(truncateToWidth(widgetTheme.fg("accent", widgetTheme.bold(subagentLines[0])), width));
+						const rows = subagentLines.slice(1);
+						const boxWidth = Math.min(width, Math.max(0, ...rows.map(line => visibleWidth(line))) + 4);
+						const innerWidth = Math.max(0, boxWidth - 4);
+						const border = (text: string) => widgetTheme.fg("dim", text);
+						if (boxWidth >= 6) statusLines.push(border(`┌${"─".repeat(boxWidth - 2)}┐`));
+						for (const line of rows) {
+							const color = line.startsWith("[+]") ? "success"
+								: line.startsWith("[!]") ? "error" : line.startsWith("[>]") ? "accent" : "muted";
+							const text = truncateToWidth(line, boxWidth >= 6 ? innerWidth : Math.max(0, width));
+							const styled = widgetTheme.fg(color, text);
+							statusLines.push(boxWidth >= 6
+								? border("│ ") + styled + " ".repeat(innerWidth - visibleWidth(text)) + border(" │")
+								: styled);
+						}
+						if (boxWidth >= 6) statusLines.push(border(`└${"─".repeat(boxWidth - 2)}┘`));
+					}
+					return [...statusLines, ...(statusLines.length ? [""] : []),
+						...wrapTextWithAnsi(items.join(widgetTheme.fg("dim", FOOTER_SEPARATOR)), Math.max(1, width))];
 				},
 			}), { placement: "aboveEditor" });
 			return {
 				dispose() {
 					disposed = true;
+					unsubscribeSubagents();
 					clearInterval(timer);
 					if (refreshUsage === refresh) refreshUsage = undefined;
 				},

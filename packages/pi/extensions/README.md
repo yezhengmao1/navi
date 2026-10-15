@@ -31,6 +31,7 @@ Only `magic-ui/index.ts` is discovered as an extension; other modules are import
 - `block-timing.ts`: right-aligned, dim per-block durations for Thinking, Output and tool calls.
 - `questionnaire.ts`: generic `questionnaire` tool with `single`, `multiple`, `confirm` questions. Defaults are not consent; `cancelled: true` always returns empty `answers`. Not a credential input form.
 - `quota.ts`: `/quota` command and optional quota snapshot status.
+- `herdr-fork/`: `/split` selects current-project sessions with arrow keys (no search input) and forks one into a new herdr pane, only in a herdr TUI. The workflow and picker remain independent internal modules; see [usage and safety notes](magic-ui/herdr-fork/README.md).
 
 `magic-ui/header.ts` shows a static NAVI wordmark in the theme accent color, followed by
 `Hey Listen! · π <version>` in muted color. Narrow terminals fall back to a compact

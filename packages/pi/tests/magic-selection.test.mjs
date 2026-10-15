@@ -40,14 +40,14 @@ test("selection card is bounded across narrow, CJK and wide terminals", () => {
     const lines = renderSelectionCard({ ...card, width });
     assert.ok(lines.length);
     for (const line of lines) assert.ok(visibleWidth(line) <= width, `${width}: ${line}`);
-    if (width >= 6) for (const line of lines) assert.equal(visibleWidth(line), Math.min(width, 76));
+    if (width >= 6) for (const line of lines) assert.equal(visibleWidth(line), width);
   }
 });
 
 test("card shows borders, groups, checkboxes, focus, warning and hints", () => {
   const lines = renderSelectionCard({ ...card, width: 76 });
   const plain = lines.map(stripTerminalSequences).join("\n");
-  for (const text of ["╭", "╯", "信息源", "输出方式", "操作", "[✓] HF Papers", "› [ ] 推送飞书", "请至少选择一个信息源。", "Esc 取消"])
+  for (const text of ["┌", "┘", "信息源", "输出方式", "操作", "[✓] HF Papers", "› [ ] 推送飞书", "请至少选择一个信息源。", "Esc 取消"])
     assert.ok(plain.includes(text), text);
   assert.ok(lines.some(line => line.includes("\x1b[44m")));
 });

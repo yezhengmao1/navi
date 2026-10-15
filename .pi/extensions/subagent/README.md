@@ -1,12 +1,20 @@
 # Navi subagent
 
-`index.ts` 和 `agents.ts` 原样取自本机 Pi 1.1.0 官方示例：
+`index.ts` 和 `agents.ts` 基于本机 Pi 1.1.0 官方示例，包含本地适配：
 `@earendil-works/pi-coding-agent/examples/extensions/subagent/`。
 上游：https://github.com/earendil-works/pi/tree/main/packages/coding-agent/examples/extensions/subagent
 版权与 MIT 许可见本目录 `LICENSE`；这两个第三方文件不适用仓库自定义许可证。
 
 在仓库根启动 Pi，审核后信任项目并 `/reload`，会自动加载本目录 `index.ts`。
 无需复制到个人配置，也不要同时加载另一份同名 `subagent` 扩展。
+
+## 独立状态区
+
+交互式 TUI 在输入框附近显示每个子任务的等待、运行、完成、失败、取消或跳过状态，不抢占输入焦点；详细输出仍在工具结果中。单任务、并行和链式调用均支持，同名 agent 按任务分别显示。
+
+状态以子进程结束为准；链式失败后的未执行任务显示「已跳过」。全部结束后停留 3 秒自动收起；期间新任务开始会取消旧的收起定时器，切换或清空会话时清除。并发工具调用的状态合并显示。界面采用主题色和逐项列表，标题为「子任务」。搭配 magic-ui 时显示在 Working 与上下文统计之间，并留空行分隔。非 TUI 模式不创建 widget。
+
+修改后执行 `/reload` 加载。
 
 ## 用法
 

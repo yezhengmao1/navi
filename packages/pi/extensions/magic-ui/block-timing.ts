@@ -3,6 +3,7 @@ import { sliceByColumn, stripTerminalSequences, truncateToWidth, visibleWidth } 
 
 // Type-only import: safety-guard remains independently loadable.
 import type { GuardTiming } from "../safety-guard.js";
+import { renderRefresh } from "./render-refresh.js";
 
 const ENTRY = "magic-ui:block-timing";
 const GUARD_ENTRY = "safety-guard:timing";
@@ -58,14 +59,31 @@ export const stripToolPathLinks = (text: string) => text.replace(/\x1b\]8;[^\x07
 export function timingRow(left: string, right: string, width: number, dim: (s: string) => string,
 	background: (s: string) => string = s => s): string {
 	if (width <= 0) return "";
-	const label = truncateToWidth(right, width, "");
-	const room = Math.max(0, width - visibleWidth(label) - 2);
+	// Auto scrollbars overlay the final column instead of reducing content width.
+	const rightPadding = Math.min(2, width);
+	const usableWidth = width - rightPadding;
+	const label = truncateToWidth(right, usableWidth, "");
+	const room = Math.max(0, usableWidth - visibleWidth(label) - 2);
 	const trimmed = sliceByColumn(left, 0, visibleWidth(stripTerminalSequences(left).trimEnd()), true);
 	// truncateToWidth resets ANSI styles before its ellipsis, including background.
 	const title = truncateToWidth(trimmed, room, background("…"));
 	// The sliced title may close its background. Paint the entire new tail,
 	// not just the digits, and do not inherit bold/italic title styling.
-	return title + background("\x1b[22;23;39m" + " ".repeat(Math.max(0, width - visibleWidth(title) - visibleWidth(label))) + dim(label));
+	return title + background("\x1b[22;23;39m" + " ".repeat(Math.max(0, usableWidth - visibleWidth(title) - visibleWidth(label))) + dim(label) + " ".repeat(rightPadding));
+}
+
+/** One-entry cache per mounted block; completed titles survive unrelated redraws. */
+export function cachedTimingRow() {
+	let previous: { left: string; right: string; width: number; style: string; output: string } | undefined;
+	return (left: string, right: string, width: number, dim: (s: string) => string,
+		background: (s: string) => string = s => s) => {
+		const style = dim(right) + background("…");
+		if (previous && previous.left === left && previous.right === right && previous.width === width
+			&& previous.style === style) return previous.output;
+		const output = timingRow(left, right, width, dim, background);
+		previous = { left, right, width, style, output };
+		return output;
+	};
 }
 
 /** Pi 1.1 lacks an assistant-block renderer API. Adapt only mounted instances,
@@ -94,16 +112,18 @@ export function blockTimingAdapter(clock: BlockClock, dim: (s: string) => string
 			if (child && typeof child.render === "function" && !decorated.has(child)) {
 				decorated.add(child);
 				const original = child.render;
+				const renderTimingRow = cachedTimingRow();
 				child.render = function (width: number) {
 					const lines = original.call(this, width);
 					const ms = clock.elapsed(messageKey(m), indices, now());
-					if (ms === undefined || !lines.length) return lines;
-					const label = durationLabel(ms);
+					if (!lines.length) return lines;
+					const label = ms === undefined ? "" : durationLabel(ms);
 					// Collapsed thinking already has a title; keep its click region and height.
 					if (hidden) {
-						return [timingRow(lines[0], label, width, dim), ...lines.slice(1)];
+						if (!label) return lines;
+						return [renderTimingRow(lines[0], label, width, dim), ...lines.slice(1)];
 					}
-					return [timingRow(dim(c.type === "thinking" ? " Thinking" : " Output"), label, width, dim), ...lines];
+					return [renderTimingRow(dim(c.type === "thinking" ? " Thinking" : " Output"), label, width, dim), ...lines];
 				};
 			}
 			if (c.type === "thinking" && m.content.slice(i + 1).some((v: any) => v.type === "text" && v.text?.trim() || v.type === "thinking" && v.thinking?.trim())) cursor++;
@@ -130,6 +150,7 @@ export function blockTimingAdapter(clock: BlockClock, dim: (s: string) => string
 				if (typeof node.toolCallId === "string" && typeof node.updateResult === "function" && typeof node.render === "function") {
 					if (!restores.has(node)) {
 						const original = node.render;
+						const renderTimingRow = cachedTimingRow();
 						const wrapped = function (this: any, width: number) {
 							const lines: string[] = [...original.call(this, width)];
 							const span = clock.tools.get(this.toolCallId);
@@ -140,7 +161,7 @@ export function blockTimingAdapter(clock: BlockClock, dim: (s: string) => string
 							if (row >= 0 && ["read", "edit", "write"].includes(this.toolName)) {
 								lines[row] = stripToolPathLinks(lines[row]);
 							}
-							if (label && row >= 0) lines[row] = timingRow(lines[row], label, width, dim,
+							if (label && row >= 0) lines[row] = renderTimingRow(lines[row], label, width, dim,
 								text => toolBackground(text, this));
 							return lines;
 						};
@@ -165,7 +186,8 @@ export default function registerBlockTiming(pi: ExtensionAPI) {
 	let adapter: ReturnType<typeof blockTimingAdapter> | undefined;
 	let root: any;
 	let timer: ReturnType<typeof setInterval> | undefined;
-	const redraw = () => { if (root) { adapter?.update(root); root.requestRender(); } };
+	const refresh = renderRefresh(() => { if (root) adapter?.update(root); }, () => root?.requestRender());
+	const redraw = (structureChanged = true) => { if (root) refresh.request(structureChanged); };
 	const stop = () => { if (timer) clearInterval(timer); timer = undefined; };
 	const unsubscribeGuard = pi.events.on(GUARD_ENTRY, (data) => {
 		const guard = data as GuardTiming;
@@ -180,7 +202,7 @@ export default function registerBlockTiming(pi: ExtensionAPI) {
 		redraw();
 	});
 	const restore = (_event: unknown, ctx: ExtensionContext) => {
-		stop(); adapter?.dispose(); clock.clear();
+		stop(); refresh.reset(); adapter?.dispose(); clock.clear();
 		for (const entry of ctx.sessionManager.getBranch()) {
 			if (entry.type !== "custom") continue;
 			if (entry.customType === GUARD_ENTRY) {
@@ -192,20 +214,25 @@ export default function registerBlockTiming(pi: ExtensionAPI) {
 			const data = entry.data as { key?: string; blocks?: [number, Span][] };
 			if (typeof data?.key === "string" && Array.isArray(data.blocks)) clock.messages.set(data.key, new Map(data.blocks));
 		}
+		if (root) adapter?.update(root);
 		redraw();
 	};
 	pi.on("session_start", restore);
 	pi.on("session_switch", restore);
 	pi.on("session_tree", restore);
+	pi.on("session_compact", () => redraw());
+	pi.on("message_start", () => redraw());
 	pi.on("agent_start", (_event, ctx) => {
 		if (ctx.mode !== "tui") return;
-		stop(); timer = setInterval(redraw, 1000); timer.unref();
+		stop(); timer = setInterval(() => redraw(false), 1000); timer.unref();
 	});
 	pi.on("message_update", (event) => {
 		if (event.message.role !== "assistant") return;
 		const e = event.assistantMessageEvent;
 		if ("contentIndex" in e) clock.update(messageKey(event.message), e.type, e.contentIndex, performance.now());
-		redraw();
+		// Patched updateContent() decorates replacement children directly. Deltas
+		// only need a coalesced repaint, not another historical-tree discovery.
+		redraw(!e.type.endsWith("_delta"));
 	});
 	pi.on("message_end", (event) => {
 		if (event.message.role !== "assistant") return;
@@ -227,15 +254,17 @@ export default function registerBlockTiming(pi: ExtensionAPI) {
 		for (const span of clock.tools.values()) span.end ??= now;
 		stop(); redraw();
 	});
-	pi.on("session_shutdown", () => { unsubscribeGuard(); stop(); adapter?.dispose(); adapter = undefined; root = undefined; clock.clear(); });
+	pi.on("session_shutdown", () => { unsubscribeGuard(); stop(); refresh.reset(); adapter?.dispose(); adapter = undefined; root = undefined; clock.clear(); });
 	return {
 		mount(tui: unknown, ctx: ExtensionContext) {
-			adapter?.dispose(); root = tui;
+			refresh.reset(); adapter?.dispose(); root = tui;
 			adapter = blockTimingAdapter(clock, text => ctx.ui.theme.fg("dim", text), () => performance.now(),
 				(text, node) => node.getRenderShell?.() === "self" ? text : ctx.ui.theme.bg(
 					node.isPartial ? "toolPendingBg" : node.result?.isError ? "toolErrorBg" : "toolSuccessBg", text));
+			adapter.update(root);
+			redraw();
 		},
-		update() { if (root) adapter?.update(root); },
-		dispose() { adapter?.dispose(); adapter = undefined; root = undefined; },
+		update() { refresh.flush(); },
+		dispose() { refresh.reset(); adapter?.dispose(); adapter = undefined; root = undefined; },
 	};
 }

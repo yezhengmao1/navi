@@ -22,7 +22,8 @@ test('file tool titles lose OSC 8 links without changing colors, output or other
       const original = node.render;
       const adapter = blockTimingAdapter(new BlockClock(), s => s);
       adapter.update({ children: [node] });
-      assert.deepEqual(node.render(80), [`${toolName} ${toolName === 'bash' ? linked : path}`, linked]);
+      const rendered = node.render(80);
+      assert.deepEqual(rendered, [`${toolName} ${toolName === 'bash' ? linked : path}`, linked]);
       adapter.dispose();
       assert.equal(node.render, original);
     }
@@ -50,6 +51,21 @@ test('right aligned annotation fits ANSI and CJK even at narrow widths', () => {
   for (const width of [0, 1, 4, 8, 20, 80]) {
     const row = timingRow('\x1b[36m中文标题很长\x1b[0m', '12.6s', width, s => `\x1b[2m${s}\x1b[0m`);
     assert.equal(tui.visibleWidth(row), width);
+  }
+});
+
+test('timing labels leave two background-painted columns clear for overlay scrollbars', () => {
+  for (const width of [0, 1, 2, 4, 8, 20, 80]) {
+    const row = timingRow('bash ' + 'x'.repeat(100), '0.1s', width, s => s,
+      s => `\x1b[44m${s}\x1b[49m`);
+    const text = tui.stripTerminalSequences(row);
+    assert.equal(tui.visibleWidth(row), width);
+    assert.ok(text.endsWith(' '.repeat(Math.min(2, width))));
+    if (width >= 8) {
+      assert.ok(text.endsWith('0.1s  '));
+      assert.ok((text.slice(0, -1) + '│').includes('0.1s'));
+      assert.ok(row.endsWith('  \x1b[49m'));
+    }
   }
 });
 
@@ -118,7 +134,7 @@ test('consecutive thinking blocks group their own durations; old messages remain
   const adapter = blockTimingAdapter(clock, s => s);
   adapter.update({ children: [node] });
   assert.match(plain(node.render(60)), /Thinking +3\.0s/);
-  assert.doesNotMatch(plain(node.render(60)), /Output/);
+  assert.match(plain(node.render(60)), /Output/);
   adapter.dispose();
 });
 
@@ -144,7 +160,8 @@ test('lifecycle persists only custom data, restores branch and cleans up', () =>
   assert.match(plain(node.render(60)), /Output +0\.0s/);
   entries.length = 0;
   handlers.get('session_tree')({}, ctx);
-  assert.doesNotMatch(plain(node.render(60)), /Output/);
+  assert.match(plain(node.render(60)), /Output/);
+  assert.doesNotMatch(plain(node.render(60)), /0\.0s/);
   handlers.get('session_shutdown')();
 });
 
@@ -163,7 +180,7 @@ test('truncated timing titles paint the ellipsis in all tool states and fit narr
       const row = timingRow(`${bg}\x1b[1mbash scp 中文 ${'x'.repeat(100)} (timeout: 120)\x1b[0m`,
         '3.9s', width, s => s, s => `${bg}${s}\x1b[49m`);
       assert.equal(tui.visibleWidth(row), width);
-      if (width >= 7) {
+      if (width >= 9) {
         assert.ok(row.includes(`${bg}…`), 'ellipsis must restore the tool background');
       }
     }

@@ -71,7 +71,7 @@ test('real guard confirmation emits blocked timing; Magic UI restores it without
   assert.equal(h.entries.length, 1);
   assert.equal(h.entries[0].data.status, 'blocked');
   assert.match(node.render(80)[0], /已阻止/);
-  assert.doesNotMatch(node.render(80)[0], /执行/);
+  assert.doesNotMatch(node.render(80)[0], /执行|Tool/);
   for (const fn of h.handlers.get('session_switch')) fn({}, ctx);
   assert.match(node.render(80)[0], /已阻止/);
   for (const fn of h.handlers.get('session_shutdown')) fn({}, ctx);

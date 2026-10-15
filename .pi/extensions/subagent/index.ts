@@ -26,9 +26,10 @@ import {
 	getMarkdownTheme,
 	withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
-import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
+import { Container, Markdown, Spacer, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.ts";
+import { SubagentStatus } from "./status.ts";
 
 const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
@@ -313,7 +314,7 @@ async function runSingleAgent(
 		agent: agentName,
 		agentSource: agent.source,
 		task,
-		exitCode: 0,
+		exitCode: -1, // Running until the child process actually exits.
 		messages: [],
 		stderr: "",
 		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
@@ -400,7 +401,7 @@ async function runSingleAgent(
 
 			proc.on("close", (code) => {
 				if (buffer.trim()) processLine(buffer);
-				resolve(code ?? 0);
+				resolve(code ?? 1);
 			});
 
 			proc.on("error", () => {
@@ -469,6 +470,15 @@ const SubagentParams = Type.Object({
 });
 
 export default function (pi: ExtensionAPI) {
+	const status = new SubagentStatus();
+	const resetStatus = (_event: unknown, ctx: import("@earendil-works/pi-coding-agent").ExtensionContext) => {
+		status.reset();
+		pi.events.emit("magic-ui:subagent-status", { lines: undefined, handled: false });
+		if (ctx.mode === "tui") ctx.ui.setWidget("subagent-status", undefined);
+	};
+	pi.on("session_start", resetStatus);
+	pi.on("session_switch", resetStatus);
+	pi.on("session_shutdown", resetStatus);
 	pi.registerTool({
 		name: "subagent",
 		label: "Subagent",
@@ -547,6 +557,49 @@ export default function (pi: ExtensionAPI) {
 				}
 			}
 
+			if (hasTasks && params.tasks!.length > MAX_PARALLEL_TASKS) {
+				return {
+					content: [{ type: "text", text: `Too many parallel tasks (${params.tasks!.length}). Max is ${MAX_PARALLEL_TASKS}.` }],
+					details: makeDetails("parallel")([]),
+				};
+			}
+			const requested = hasChain ? params.chain! : hasTasks ? params.tasks! : [{ agent: params.agent! }];
+			const board = status.start(_toolCallId, requested.map(task => task.agent), lines => {
+				if (ctx.mode !== "tui") return;
+				const event = { lines, handled: false };
+				pi.events.emit("magic-ui:subagent-status", event);
+				if (event.handled) { ctx.ui.setWidget("subagent-status", undefined); return; }
+				if (!lines) { ctx.ui.setWidget("subagent-status", undefined); return; }
+				ctx.ui.setWidget("subagent-status", (_tui, theme) => ({
+					render(width) {
+						const output = ["", truncateToWidth(theme.fg("accent", lines[0]), width)];
+						for (const item of lines.slice(1)) {
+							const color = item.startsWith("[+]") ? "success" : item.startsWith("[!]") ? "error"
+								: item.startsWith("[>]") ? "accent" : "muted";
+							output.push(truncateToWidth(theme.fg(color, `  ${item}`), width));
+						}
+						return output;
+					},
+					invalidate() {},
+				}));
+			});
+			const runTracked = async (index: number, ...args: Parameters<typeof runSingleAgent>) => {
+				if (signal?.aborted) {
+					board.set(index, "cancelled");
+					throw new Error("Subagent was aborted");
+				}
+				board.set(index, "running");
+				try {
+					const result = await runSingleAgent(...args);
+					board.set(index, signal?.aborted || result.stopReason === "aborted" ? "cancelled" : isFailedResult(result) ? "failed" : "completed");
+					return result;
+				} catch (error) {
+					board.set(index, signal?.aborted ? "cancelled" : "failed");
+					throw error;
+				}
+			};
+
+			try {
 			if (params.chain && params.chain.length > 0) {
 				const results: SingleResult[] = [];
 				let previousOutput = "";
@@ -570,7 +623,7 @@ export default function (pi: ExtensionAPI) {
 							}
 						: undefined;
 
-					const result = await runSingleAgent(
+					const result = await runTracked(i,
 						ctx.cwd,
 						dispatchDefaults,
 						agents,
@@ -602,17 +655,6 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			if (params.tasks && params.tasks.length > 0) {
-				if (params.tasks.length > MAX_PARALLEL_TASKS)
-					return {
-						content: [
-							{
-								type: "text",
-								text: `Too many parallel tasks (${params.tasks.length}). Max is ${MAX_PARALLEL_TASKS}.`,
-							},
-						],
-						details: makeDetails("parallel")([]),
-					};
-
 				// Track all results for streaming updates
 				const allResults: SingleResult[] = new Array(params.tasks.length);
 
@@ -643,7 +685,7 @@ export default function (pi: ExtensionAPI) {
 				};
 
 				const results = await mapWithConcurrencyLimit(params.tasks, MAX_CONCURRENCY, async (t, index) => {
-					const result = await runSingleAgent(
+					const result = await runTracked(index,
 						ctx.cwd,
 						dispatchDefaults,
 						agents,
@@ -686,7 +728,7 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			if (params.agent && params.task) {
-				const result = await runSingleAgent(
+				const result = await runTracked(0,
 					ctx.cwd,
 					dispatchDefaults,
 					agents,
@@ -718,6 +760,9 @@ export default function (pi: ExtensionAPI) {
 				content: [{ type: "text", text: `Invalid parameters. Available agents: ${available}` }],
 				details: makeDetails("single")([]),
 			};
+			} finally {
+				board.finish(signal?.aborted ?? false);
+			}
 		},
 
 		renderCall(args, theme, _context) {

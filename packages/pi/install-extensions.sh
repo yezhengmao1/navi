@@ -16,6 +16,12 @@ LEGACY_EXTENSIONS=(thinking-tail.ts bash-truncate.ts shell-safety-guard.ts
   heavy-command-reviewer.ts confirm-feedback.ts magic-editor.ts
   magic-ui.ts magic-header.ts compact-display.ts codex-quota.ts
   clear.ts command-guard.ts)
+LEGACY_DIRECTORIES=(herdr-fork)
+cleanup_legacy() {
+  for name in "${LEGACY_EXTENSIONS[@]}"; do rm -f -- "$DEST_DIR/$name"; done
+  # Remove the old standalone entry, never its symlink target.
+  for name in "${LEGACY_DIRECTORIES[@]}"; do rm -rf -- "$DEST_DIR/$name"; done
+}
 for arg in "$@"; do
   case "$arg" in
     --link) MODE=link ;;
@@ -33,13 +39,13 @@ if [ "$UNINSTALL" -eq 1 ]; then
     target="$DEST_DIR/$(basename "$resource")"
     rm -rf -- "$target"
   done
-  for name in "${LEGACY_EXTENSIONS[@]}"; do rm -f -- "$DEST_DIR/$name"; done
+  cleanup_legacy
   for theme in "$THEME_SRC_DIR"/*.json; do rm -f -- "$THEME_DEST_DIR/$(basename "$theme")"; done
   echo '已移除本包同名资源（按名称匹配）。'
   exit 0
 fi
 mkdir -p "$DEST_DIR" "$THEME_DEST_DIR"
-for name in "${LEGACY_EXTENSIONS[@]}"; do rm -f -- "$DEST_DIR/$name"; done
+cleanup_legacy
 install_resource() {
   local source="$1" target="$2"
   # Never follow an old link and overwrite the repository through it.
