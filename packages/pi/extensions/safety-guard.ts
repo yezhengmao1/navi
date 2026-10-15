@@ -29,7 +29,8 @@ import { homedir } from "node:os";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { isAbsolute } from "node:path";
 import type { ExtensionAPI, ExtensionContext, ExtensionUIContext, Theme, ToolCallEvent } from "@earendil-works/pi-coding-agent";
-import { CURSOR_MARKER, type Focusable, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { CURSOR_MARKER, type Focusable, matchesKey, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { renderSelectionCard } from "./magic-ui/editor-footer.js";
 
 // --- per-tool safety timing (UI metadata, never model context) -------------
 type GuardPhase = "review" | "confirm";
@@ -107,11 +108,11 @@ export class ConfirmFeedbackDialog implements Focusable {
 			return;
 		}
 
-		if (matchesKey(data, "up")) {
+		if (matchesKey(data, "up") || matchesKey(data, "shift+tab")) {
 			this.stop = this.stop === "yes" ? "feedback" : this.stop === "no" ? "yes" : "no";
 			return;
 		}
-		if (matchesKey(data, "down")) {
+		if (matchesKey(data, "down") || matchesKey(data, "tab")) {
 			this.stop = this.stop === "yes" ? "no" : this.stop === "no" ? "feedback" : "yes";
 			return;
 		}
@@ -168,47 +169,10 @@ export class ConfirmFeedbackDialog implements Focusable {
 
 	render(width: number): string[] {
 		const th = this.theme;
-		const w = Math.max(4, Math.min(width, 120));
-		const innerW = w - 2;
-		const lines: string[] = [];
-
-		const pad = (s: string, len: number) => {
-			const fitted = truncateToWidth(s, len, "", true);
-			const vis = visibleWidth(fitted);
-			return fitted + " ".repeat(Math.max(0, len - vis));
-		};
-		const row = (content: string) => th.fg("borderMuted", "│") + pad(content, innerW) + th.fg("borderMuted", "│");
-
-		// Box top + title.
-		lines.push(th.fg("borderMuted", `╭${"─".repeat(innerW)}╮`));
-		if (this.title) {
-			const t = th.fg("warning", " " + this.title);
-			lines.push(row(t));
-			lines.push(row(""));
-		}
-
-		// Body (may already contain newlines).
-		for (const bl of this.body.split("\n")) {
-			for (const wrapped of wrapTextWithAnsi(bl, Math.max(1, innerW - 1))) {
-				lines.push(row(" " + th.fg("text", wrapped)));
-			}
-		}
-		lines.push(row(""));
-
-		// Yes / No options.
-		const optRow = (label: string, stop: Stop, selected: boolean) => {
-			const marker = selected ? "▶ " : "  ";
-			const text = selected ? th.fg("warning", label) : th.fg("text", label);
-			return row(` ${marker}${text}`);
-		};
-		lines.push(optRow(this.yesLabel, "yes", this.stop === "yes"));
-		lines.push(optRow(this.noLabel, "no", this.stop === "no"));
-		lines.push(row(""));
-
-		// Feedback input.
+		const bodyWidth = Math.max(1, width >= 6 ? width - 4 : width);
+		const bodyLines = this.body.split("\n").flatMap(line =>
+			wrapTextWithAnsi(th.fg("text", line), bodyWidth));
 		const fbSelected = this.stop === "feedback";
-		const fbMarker = fbSelected ? "▶ " : "  ";
-		const fbLabel = fbSelected ? th.fg("warning", "💬 反馈:") : th.fg("dim", "💬 反馈:");
 		let inputDisplay = this.feedback;
 		if (fbSelected) {
 			const before = inputDisplay.slice(0, this.cursor);
@@ -218,15 +182,18 @@ export class ConfirmFeedbackDialog implements Focusable {
 			inputDisplay = `${before}${marker}\x1b[7m${cursorChar}\x1b[27m${after}`;
 		}
 		const placeholder = this.feedback.length === 0 ? th.fg("dim", "(可选，回车拒绝时提交)") : "";
-		const inputPart = this.feedback.length > 0 ? inputDisplay : placeholder;
-		lines.push(row(` ${fbMarker}${fbLabel} ${inputPart}`));
-		lines.push(row(""));
-
-		// Hints.
-		lines.push(row(` ${th.fg("dim", "↑↓ 选择 • 输入文字 • Enter 确认 • Esc 拒绝")}`));
-		lines.push(th.fg("borderMuted", `╰${"─".repeat(innerW)}╯`));
-
-		return lines;
+		const inputPart = this.feedback.length > 0 || fbSelected ? inputDisplay : placeholder;
+		const plainLabel = (label: string) => label.replace(/^[✅❌🧹]\s*/u, "");
+		return renderSelectionCard({
+			width, theme: th, title: plainLabel(this.title), bodyLines,
+			items: [
+				{ label: plainLabel(this.yesLabel), group: "操作" },
+				{ label: plainLabel(this.noLabel) },
+				{ label: `反馈：${inputPart}`, group: "可选反馈（拒绝时提交）" },
+			],
+			cursor: this.stop === "yes" ? 0 : this.stop === "no" ? 1 : 2,
+			hints: ["↑↓/Tab 移动 · 反馈行输入文字", "Enter 确认当前操作 · Esc 拒绝"],
+		});
 	}
 
 	invalidate(): void {}

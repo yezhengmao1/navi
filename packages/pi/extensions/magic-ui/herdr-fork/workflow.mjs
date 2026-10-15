@@ -12,7 +12,7 @@ export function splitDirection(layout, paneId) {
   return rect && rect.width >= 160 && rect.width >= rect.height * 2 ? 'right' : 'down';
 }
 
-export async function forkWorkflow({ ctx, args, env, list, run, select, uuid = randomUUID }) {
+export async function forkWorkflow({ ctx, args, env, list, run, select, confirm = (title, body) => ctx.ui.confirm(title, body), uuid = randomUUID }) {
   if (ctx.mode !== 'tui' || env.HERDR_ENV !== '1' || !env.HERDR_PANE_ID) {
     ctx.ui.notify('/split 只能在 herdr 内的 Pi 交互终端使用。', 'error');
     return;
@@ -35,7 +35,7 @@ export async function forkWorkflow({ ctx, args, env, list, run, select, uuid = r
     if (!source) return;
     const cwd = source.cwd || ctx.cwd;
     // Selecting a session from another project explicitly confirms its working directory.
-    if (cwd !== ctx.cwd && !await ctx.ui.confirm('在其他项目中创建分屏？', cwd)) return;
+    if (cwd !== ctx.cwd && !await confirm('在其他项目中创建分屏？', cwd)) return;
     const layout = await run(['pane', 'layout', '--pane', env.HERDR_PANE_ID]);
     const split = await run(['pane', 'split', '--pane', env.HERDR_PANE_ID,
       '--direction', splitDirection(layout.layout, env.HERDR_PANE_ID), '--cwd', cwd, '--no-focus']);

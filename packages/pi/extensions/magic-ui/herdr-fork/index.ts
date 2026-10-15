@@ -1,6 +1,7 @@
 import { SessionManager, type ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { decodeResponse, forkWorkflow } from './workflow.mjs';
 import { createSessionPicker } from './picker.ts';
+import { confirmOrFeedback } from '../../safety-guard.js';
 
 export default function registerHerdrFork(pi: ExtensionAPI) {
   let busy = false;
@@ -15,6 +16,7 @@ export default function registerHerdrFork(pi: ExtensionAPI) {
       try {
         await forkWorkflow({
           ctx, args, env: process.env,
+          confirm: async (title: string, body: string) => (await confirmOrFeedback(ctx, title, body)).allow,
           list: () => SessionManager.list(ctx.cwd, ctx.sessionManager.getSessionDir()),
           select: (labels: string[]) => ctx.ui.custom<string | undefined>((tui, theme, _kb, done) =>
             createSessionPicker(tui, theme, done, labels)),

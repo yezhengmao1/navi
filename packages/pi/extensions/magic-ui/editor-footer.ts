@@ -310,7 +310,8 @@ export interface MagicSelectionCard {
 
 export function renderSelectionCard(card: MagicSelectionCard): string[] {
 	const { theme, items, cursor } = card;
-	const width = Math.max(1, Math.floor(card.width));
+	const width = Math.max(0, Math.floor(card.width));
+	if (width === 0) return [];
 	const framed = width >= 6;
 	const bodyWidth = framed ? width - 4 : width;
 	const border = (text: string) => theme.fg("border", text);

@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Key, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
+import { Key, matchesKey } from "@earendil-works/pi-tui";
+import { renderSelectionCard } from "./editor-footer.js";
 import { Type } from "typebox";
 
 const Option = Type.Object({
@@ -154,16 +155,7 @@ export default function (pi: ExtensionAPI) {
               lines: undefined as string[] | undefined,
             };
             pi.events.emit("magic-ui:selection-card", card);
-            if (card.lines) return card.lines;
-            const lines = [theme.fg("accent", params.title), theme.fg("muted", card.subtitle)];
-            for (const [i, item] of visible.entries()) {
-              if (item.group) lines.push(theme.fg("muted", item.group));
-              const checked = "checked" in item ? `[${item.checked ? "x" : " "}] ` : "";
-              lines.push(theme.fg(i === cursor - start ? "accent" : "text", `${i === cursor - start ? ">" : " "} ${checked}${item.label}`));
-            }
-            lines.push(...hints.map(h => theme.fg("muted", h)));
-            if (warning) lines.push(theme.fg("warning", warning));
-            return lines.map(line => truncateToWidth(line, Math.max(0, width), ""));
+            return card.lines ?? renderSelectionCard(card);
           },
           invalidate() {},
           handleInput(data) {

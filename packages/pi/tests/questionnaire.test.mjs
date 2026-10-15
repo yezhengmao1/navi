@@ -14,7 +14,7 @@ async function run(questions, keys, { mode = 'tui', abort = false, preAbort = fa
   let frame;
   const ctx = { mode, ui: { custom: factory => new Promise((resolve, reject) => {
     let finished = false;
-    const component = factory({ requestRender() {} }, { fg: (_c, s) => s }, {}, v => { finished = true; resolve(v); });
+    const component = factory({ requestRender() {} }, { fg: (_c, s) => s, bg: (_c, s) => s, bold: s => s }, {}, v => { finished = true; resolve(v); });
     for (const width of [0, 1, 12, 40, 100]) {
       for (const line of component.render(width)) assert.ok(tui.visibleWidth(line) <= width);
     }
