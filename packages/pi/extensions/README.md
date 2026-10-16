@@ -141,7 +141,7 @@ vermilion accents, warm gold highlights, and ivory text. Thinking-level borders
 progress from muted warm red to pale gold; green remains reserved for success
 and added diff lines. Select `magic` in `/settings` after installing the theme.
 
-The `@@` / `/mention` session list uses a single-scope, 10-second metadata cache
+The `$` inline completion / `/mention` session list uses a single-scope, 10-second metadata cache
 and coalesces concurrent loads. It discards transcript search text, clears on
 session changes/renames/shutdown, and reloads on cache misses or abbreviated IDs
 to check uniqueness against newly created sessions.

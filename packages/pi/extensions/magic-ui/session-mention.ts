@@ -3,11 +3,12 @@ import {
   type ExtensionAPI, type ExtensionContext, type SessionInfo,
 } from "@earendil-works/pi-coding-agent";
 
+import type { AutocompleteProvider } from "@earendil-works/pi-tui";
+
 import { createSessionPicker } from "./herdr-fork/picker.js";
 
 const MAX_REFERENCES = 3;
-const mentionPattern = /(^|\s)@session:([\w-]+)(?=$|\s|[，。！？,!?;；])/g;
-const pickerPattern = /(^|\s)@@(?=$|\s)/;
+const mentionPattern = /(^|\s)\$session:([\w-]+)(?=$|\s|[，。！？,!?;；])/g;
 
 export function referenceIds(text: string): string[] {
   return [...new Set([...text.matchAll(mentionPattern)].map(m => m[2]))];
@@ -72,59 +73,70 @@ async function pick(ctx: ExtensionContext, sessions: SessionInfo[], query = "") 
   return selected === undefined ? undefined : filtered[labels.indexOf(selected)];
 }
 
+export function sessionAutocomplete(current: AutocompleteProvider, list: () => Promise<SessionInfo[]>): AutocompleteProvider {
+  const token = (lines: string[], line: number, col: number) =>
+    lines[line]?.slice(0, col).match(/(?:^|\s)(\$[^\s$]*)$/)?.[1];
+  return {
+    triggerCharacters: [...new Set([...(current.triggerCharacters ?? []), "$"])],
+    async getSuggestions(lines, line, col, options) {
+      const prefix = token(lines, line, col);
+      if (prefix === undefined) return current.getSuggestions(lines, line, col, options);
+      try {
+        const sessions = await list();
+        if (options.signal.aborted) return null;
+        const query = prefix.slice(1).replace(/^session:/, "").toLowerCase();
+        const clean = (text: string) => text.replace(/[\x00-\x1f\x7f-\x9f]/g, " ");
+        const items = sessions.filter(s => `${s.name ?? ""} ${s.firstMessage} ${s.cwd} ${s.id}`.toLowerCase().includes(query))
+          .slice(0, 30).map(s => ({ value: `$session:${s.id}`, label: clean(s.name || s.firstMessage || "未命名").slice(0, 80),
+            description: clean(`${s.cwd} · ${s.id}`) }));
+        return items.length ? { items, prefix } : null;
+      } catch { return null; }
+    },
+    applyCompletion(lines, line, col, item, prefix) {
+      if (!prefix.startsWith("$") || !item.value.startsWith("$session:"))
+        return current.applyCompletion(lines, line, col, item, prefix);
+      const result = [...lines];
+      const insertion = item.value + " ";
+      result[line] = lines[line].slice(0, col - prefix.length) + insertion + lines[line].slice(col);
+      return { lines: result, cursorLine: line, cursorCol: col - prefix.length + insertion.length };
+    },
+    shouldTriggerFileCompletion(lines, line, col) {
+      return token(lines, line, col) !== undefined || (current.shouldTriggerFileCompletion?.(lines, line, col) ?? true);
+    },
+  };
+}
+
 export default function sessionMention(pi: ExtensionAPI) {
-  let choosing = false;
   const cache = sessionListCache(loadSessions);
   const list = async (ctx: ExtensionContext) => (await cache.get(ctx))
     .filter(s => s.id !== ctx.sessionManager.getSessionId());
+  // Attach directly when MagicEditor receives its provider, including editor
+  // replacement/reload. Do not depend on the runtime's provider-wrapper registry.
+  const unsubscribe = pi.events.on("magic-ui:session-completion", data => {
+    const event = data as { ctx: ExtensionContext; provider: AutocompleteProvider };
+    event.provider = sessionAutocomplete(event.provider, () => list(event.ctx));
+  });
   pi.on("session_start", () => cache.clear());
   pi.on("session_switch", () => cache.clear());
   pi.on("session_info_changed", () => cache.clear());
-  const unsubscribeMention = pi.events.on("magic-ui:mention", (data) => {
-    const event = data as { ctx: ExtensionContext; insert: (text: string) => void; handled: boolean };
-    event.handled = true;
-    if (choosing) return;
-    choosing = true;
-    // Leave the editor's key handler before mounting the custom selection card.
-    void Promise.resolve().then(async () => {
-      try {
-        const selected = await pick(event.ctx, await list(event.ctx));
-        event.insert(selected ? `@session:${selected.id} ` : "@");
-      } catch (error) {
-        event.ctx.ui.notify(`无法选择会话：${String(error)}`, "error");
-        event.insert("@");
-      } finally { choosing = false; }
-    });
-  });
-  pi.on("session_shutdown", () => { cache.clear(); unsubscribeMention?.(); });
+  pi.on("session_shutdown", () => { cache.clear(); unsubscribe?.(); });
   pi.registerCommand("mention", {
-    description: "选择其他会话并插入 @session:ID；/mention [关键词]",
+    description: "选择其他会话并插入 $session:ID；/mention [关键词]",
     handler: async (query, ctx) => {
-      if (!ctx.hasUI) throw new Error("请在交互模式使用 /mention，或直接输入 @session:ID");
+      if (!ctx.hasUI) throw new Error("请在交互模式使用 /mention，或直接输入 $session:ID");
       const selected = await pick(ctx, await list(ctx), query.trim());
       if (selected) {
         const draft = ctx.ui.getEditorText();
-        ctx.ui.setEditorText(`${draft}${draft && !/\s$/.test(draft) ? " " : ""}@session:${selected.id} `);
+        ctx.ui.setEditorText(`${draft}${draft && !/\s$/.test(draft) ? " " : ""}$session:${selected.id} `);
       }
     },
   });
 
   pi.on("input", async (event, ctx) => {
-    if (!referenceIds(event.text).length && !pickerPattern.test(event.text)) return;
+    if (!referenceIds(event.text).length) return;
     let text = event.text;
     try {
       let sessions = await list(ctx);
-      // Pasted @@ can also open the picker on submission; single @ stays native.
-      while (pickerPattern.test(text)) {
-        if (!ctx.hasUI) throw new Error("非交互模式请使用 @session:ID");
-        const selected = await pick(ctx, sessions);
-        if (!selected) {
-          ctx.ui.setEditorText(event.text);
-          ctx.ui.notify("已取消引用；原文字已恢复，附件如有需要请重新添加", "info");
-          return { action: "handled" };
-        }
-        text = text.replace(pickerPattern, (_m, space) => `${space}@session:${selected.id}`);
-      }
       const ids = referenceIds(text);
       if (ids.length > MAX_REFERENCES) throw new Error(`每次最多引用 ${MAX_REFERENCES} 个会话`);
       // New IDs and abbreviated IDs need a fresh list (including new collisions).

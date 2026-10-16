@@ -26,6 +26,7 @@ import {
 	wrapTextWithAnsi,
 	visibleWidth,
 	stripTerminalSequences,
+	type AutocompleteProvider,
 	type EditorTheme,
 	type TUI,
 	type TuiMouseEvent,
@@ -441,21 +442,22 @@ export default function (pi: ExtensionAPI) {
 		class MagicEditor extends CustomEditor {
 			private renderedContentHeight = 0;
 
+			setAutocompleteProvider(provider: AutocompleteProvider) {
+				const event = { ctx, provider };
+				pi.events.emit("magic-ui:session-completion", event);
+				super.setAutocompleteProvider(event.provider);
+			}
+
 			handleInput(data: string) {
-				if (data === "@") {
+				super.handleInput(data);
+				// Older running Pi editors ignore provider.triggerCharacters even after
+				// /reload. Request the normal (not force/Tab) picker after inserting $.
+				if (data === "$") {
 					const { line, col } = this.getCursor();
-					const before = (this.getText().split("\n")[line] ?? "").slice(0, col);
-					if (/(?:^|\s)@$/.test(before)) {
-						const event = {
-							ctx, handled: false,
-							// The first @ already belongs to the native editor.
-							insert: (text: string) => { this.insertTextAtCursor(text.slice(1)); },
-						};
-						pi.events.emit("magic-ui:mention", event);
-						if (event.handled) return;
+					if (/(?:^|\s)\$$/.test((this.getText().split("\n")[line] ?? "").slice(0, col))) {
+						(this as unknown as { tryTriggerAutocomplete(): void }).tryTriggerAutocomplete();
 					}
 				}
-				super.handleInput(data);
 			}
 
 			constructor(tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) {
