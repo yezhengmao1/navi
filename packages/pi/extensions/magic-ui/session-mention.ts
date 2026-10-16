@@ -1,9 +1,10 @@
 import {
-  SessionManager,
+  SessionManager, getAgentDir,
   type ExtensionAPI, type ExtensionContext, type SessionInfo,
 } from "@earendil-works/pi-coding-agent";
 
-import type { AutocompleteProvider } from "@earendil-works/pi-tui";
+import { dirname, join, resolve } from "node:path";
+import type { AutocompleteItem, AutocompleteProvider } from "@earendil-works/pi-tui";
 
 import { createSessionPicker } from "./herdr-fork/picker.js";
 
@@ -51,9 +52,13 @@ export function sessionListCache(load: (ctx: ExtensionContext) => Promise<Sessio
   };
 }
 
-async function loadSessions(ctx: ExtensionContext): Promise<SessionInfo[]> {
+export async function loadSessions(ctx: ExtensionContext, manager = SessionManager): Promise<SessionInfo[]> {
+  const directory = ctx.sessionManager.getSessionDir();
+  // listAll already visits every immediate child of the default sessions root.
+  // Only custom directories outside that scope need a second scan.
+  const covered = dirname(resolve(directory)) === resolve(join(getAgentDir(), "sessions"));
   const [all, local] = await Promise.all([
-    SessionManager.listAll(), SessionManager.list(ctx.cwd, ctx.sessionManager.getSessionDir()),
+    manager.listAll(), covered ? Promise.resolve([]) : manager.list(ctx.cwd, directory),
   ]);
   return [...new Map([...all, ...local].map(s => [s.path, s])).values()]
     .sort((a, b) => b.modified.getTime() - a.modified.getTime());
@@ -74,6 +79,11 @@ async function pick(ctx: ExtensionContext, sessions: SessionInfo[], query = "") 
 }
 
 export function sessionAutocomplete(current: AutocompleteProvider, list: () => Promise<SessionInfo[]>): AutocompleteProvider {
+  // Session objects are immutable cache snapshots. Weak keys let expired
+  // snapshots (and their search strings) be reclaimed instead of accumulating.
+  const searchText = new WeakMap<SessionInfo, string>();
+  const displayItems = new WeakMap<SessionInfo, AutocompleteItem>();
+  const clean = (text: string) => text.replace(/[\x00-\x1f\x7f-\x9f]/g, " ");
   const token = (lines: string[], line: number, col: number) =>
     lines[line]?.slice(0, col).match(/(?:^|\s)(\$[^\s$]*)$/)?.[1];
   return {
@@ -81,14 +91,31 @@ export function sessionAutocomplete(current: AutocompleteProvider, list: () => P
     async getSuggestions(lines, line, col, options) {
       const prefix = token(lines, line, col);
       if (prefix === undefined) return current.getSuggestions(lines, line, col, options);
+      if (options.signal.aborted) return null;
       try {
         const sessions = await list();
         if (options.signal.aborted) return null;
         const query = prefix.slice(1).replace(/^session:/, "").toLowerCase();
-        const clean = (text: string) => text.replace(/[\x00-\x1f\x7f-\x9f]/g, " ");
-        const items = sessions.filter(s => `${s.name ?? ""} ${s.firstMessage} ${s.cwd} ${s.id}`.toLowerCase().includes(query))
-          .slice(0, 30).map(s => ({ value: `$session:${s.id}`, label: clean(s.name || s.firstMessage || "未命名").slice(0, 80),
-            description: clean(`${s.cwd} · ${s.id}`) }));
+        const items: AutocompleteItem[] = [];
+        for (const session of sessions) {
+          if (query) {
+            let text = searchText.get(session);
+            if (text === undefined) {
+              text = `${session.name ?? ""} ${session.firstMessage} ${session.cwd} ${session.id}`.toLowerCase();
+              searchText.set(session, text);
+            }
+            if (!text.includes(query)) continue;
+          }
+          let item = displayItems.get(session);
+          if (!item) {
+            item = { value: `$session:${session.id}`,
+              label: clean(session.name || session.firstMessage || "未命名").slice(0, 80),
+              description: clean(`${session.cwd} · ${session.id}`) };
+            displayItems.set(session, item);
+          }
+          items.push(item);
+          if (items.length === 30) break;
+        }
         return items.length ? { items, prefix } : null;
       } catch { return null; }
     },
@@ -108,8 +135,14 @@ export function sessionAutocomplete(current: AutocompleteProvider, list: () => P
 
 export default function sessionMention(pi: ExtensionAPI) {
   const cache = sessionListCache(loadSessions);
-  const list = async (ctx: ExtensionContext) => (await cache.get(ctx))
-    .filter(s => s.id !== ctx.sessionManager.getSessionId());
+  let filtered: { source: SessionInfo[]; id: string; sessions: SessionInfo[] } | undefined;
+  const list = async (ctx: ExtensionContext) => {
+    const source = await cache.get(ctx);
+    const id = ctx.sessionManager.getSessionId();
+    if (filtered?.source !== source || filtered.id !== id)
+      filtered = { source, id, sessions: source.filter(s => s.id !== id) };
+    return filtered.sessions;
+  };
   // Attach directly when MagicEditor receives its provider, including editor
   // replacement/reload. Do not depend on the runtime's provider-wrapper registry.
   const unsubscribe = pi.events.on("magic-ui:session-completion", data => {

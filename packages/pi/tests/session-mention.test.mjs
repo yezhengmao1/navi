@@ -1,7 +1,42 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { load, tui } from './helpers.mjs';
-const { sessionAutocomplete, referenceIds, resolveReference, citeSessions, sessionListCache, default: register } = await load('session-mention');
+import { load, tui, root } from './helpers.mjs';
+import { join } from 'node:path';
+const { getAgentDir } = await import(root + '/dist/index.js');
+const { loadSessions, sessionAutocomplete, referenceIds, resolveReference, citeSessions, sessionListCache, default: register } = await load('session-mention');
+
+test('default session scope is scanned once; custom session directories are still merged', async () => {
+  let allCalls = 0, localCalls = 0;
+  const session = { id: 'a', path: '/a', modified: new Date() };
+  const manager = { listAll: async () => { allCalls++; return [session]; },
+    list: async () => { localCalls++; return [session]; } };
+  const ctx = directory => ({ cwd: '/work', sessionManager: { getSessionDir: () => directory } });
+  assert.deepEqual(await loadSessions(ctx(join(getAgentDir(), 'sessions', '--work--')), manager), [session]);
+  assert.equal(localCalls, 0);
+  assert.deepEqual(await loadSessions(ctx('/custom/sessions'), manager), [session]);
+  assert.equal(localCalls, 1);
+  assert.equal(allCalls, 2);
+});
+
+test('completion stops after 30 results, reuses search metadata, and skips cancelled loads', async () => {
+  let reads = 0, loads = 0;
+  const sessions = Array.from({ length: 10000 }, (_, i) => ({ id: String(i), cwd: '/work', firstMessage: '',
+    get name() { reads++; return 'training'; } }));
+  const provider = sessionAutocomplete({}, async () => { loads++; return sessions; });
+  const controller = new AbortController();
+  const options = { signal: controller.signal };
+  const first = await provider.getSuggestions(['$'], 0, 1, options);
+  assert.equal(first.items.length, 30);
+  assert.equal(reads, 30, 'empty query must not inspect all 10,000 sessions');
+  await provider.getSuggestions(['$training'], 0, 9, options);
+  const warmReads = reads;
+  const warm = await provider.getSuggestions(['$train'], 0, 6, options);
+  assert.equal(reads, warmReads, 'cached search strings and display items are reused');
+  assert.equal(warm.items[0], first.items[0]);
+  controller.abort();
+  await provider.getSuggestions(['$'], 0, 1, options);
+  assert.equal(loads, 3, 'already aborted requests must not load sessions');
+});
 
 test('real MagicEditor opens dollar candidates and Escape cancels without changing text', async () => {
   const { default: registerEditor } = await load('editor-footer');
