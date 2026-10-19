@@ -75,7 +75,7 @@ test('extension loads and registers status reset hooks', async () => {
   const { default: register } = await load('../../../../.pi/extensions/subagent/index');
   const events = new Map();
   let tool;
-  register({ events: { emit() {} }, on: (name, fn) => events.set(name, fn), registerTool: value => { tool = value; } });
+  register({ events: { emit() {} }, registerCommand() {}, on: (name, fn) => events.set(name, fn), registerTool: value => { tool = value; } });
   assert.equal(tool.name, 'subagent');
   const frames = [];
   const result = await tool.execute('missing-agent', { agent: '__nonexistent_status_test__', task: 'test' },

@@ -30,6 +30,8 @@ import { Container, Markdown, Spacer, Text, truncateToWidth } from "@earendil-wo
 import { Type } from "typebox";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.ts";
 import { SubagentStatus } from "./status.ts";
+import { registerScheduler } from "./scheduler.ts";
+import { appendTail, BoundedLines, boundedText, finalAssistantText } from "./output.ts";
 
 const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
@@ -148,6 +150,8 @@ interface UsageStats {
 }
 
 interface SingleResult {
+	/** Only populated by lightweight scheduled runs; messages stay empty. */
+	finalOutput?: string;
 	agent: string;
 	agentSource: "user" | "project" | "unknown";
 	task: string;
@@ -186,9 +190,9 @@ function isFailedResult(result: SingleResult): boolean {
 
 function getResultOutput(result: SingleResult): string {
 	if (isFailedResult(result)) {
-		return result.errorMessage || result.stderr || getFinalOutput(result.messages) || "(no output)";
+		return result.errorMessage || result.stderr || result.finalOutput || getFinalOutput(result.messages) || "(no output)";
 	}
-	return getFinalOutput(result.messages) || "(no output)";
+	return result.finalOutput || getFinalOutput(result.messages) || "(no output)";
 }
 
 function truncateParallelOutput(output: string): string {
@@ -270,7 +274,7 @@ interface DispatchDefaults {
 	thinkingLevel?: ThinkingLevel;
 }
 
-async function runSingleAgent(
+export async function runSingleAgent(
 	defaultCwd: string,
 	dispatchDefaults: DispatchDefaults,
 	agents: AgentConfig[],
@@ -281,6 +285,7 @@ async function runSingleAgent(
 	signal: AbortSignal | undefined,
 	onUpdate: OnUpdateCallback | undefined,
 	makeDetails: (results: SingleResult[]) => SubagentDetails,
+	lightweight = false,
 ): Promise<SingleResult> {
 	const agent = agents.find((a) => a.name === agentName);
 
@@ -341,6 +346,7 @@ async function runSingleAgent(
 
 		args.push(`Task: ${task}`);
 		let wasAborted = false;
+		let outputError: string | undefined;
 
 		const exitCode = await new Promise<number>((resolve) => {
 			const invocation = getPiInvocation(args);
@@ -350,6 +356,19 @@ async function runSingleAgent(
 				stdio: ["ignore", "pipe", "pipe"],
 			});
 			let buffer = "";
+			let closed = false;
+			let killTimer: ReturnType<typeof setTimeout> | undefined;
+			const killProc = () => {
+				if (closed || wasAborted) return;
+				wasAborted = true;
+				proc.kill("SIGTERM");
+				killTimer = setTimeout(() => { if (!closed) proc.kill("SIGKILL"); }, 5000);
+			};
+			const cleanup = () => {
+				closed = true;
+				clearTimeout(killTimer);
+				signal?.removeEventListener("abort", killProc);
+			};
 
 			const processLine = (line: string) => {
 				if (!line.trim()) return;
@@ -362,7 +381,8 @@ async function runSingleAgent(
 
 				if (event.type === "message_end" && event.message) {
 					const msg = event.message as Message;
-					currentResult.messages.push(msg);
+					if (!lightweight) currentResult.messages.push(msg);
+					else if (msg.role === "assistant") currentResult.finalOutput = finalAssistantText(msg);
 
 					if (msg.role === "assistant") {
 						currentResult.usage.turns++;
@@ -377,18 +397,23 @@ async function runSingleAgent(
 						}
 						if (!currentResult.model && msg.model) currentResult.model = msg.model;
 						if (msg.stopReason) currentResult.stopReason = msg.stopReason;
-						if (msg.errorMessage) currentResult.errorMessage = msg.errorMessage;
+						if (msg.errorMessage) currentResult.errorMessage = lightweight ? boundedText(msg.errorMessage) : msg.errorMessage;
 					}
 					emitUpdate();
 				}
 
-				if (event.type === "tool_result_end" && event.message) {
+				if (!lightweight && event.type === "tool_result_end" && event.message) {
 					currentResult.messages.push(event.message as Message);
 					emitUpdate();
 				}
 			};
 
+			const boundedLines = lightweight ? new BoundedLines(processLine, () => {
+				outputError = "Subagent JSON event exceeded the 4 Mi-character output limit.";
+				killProc();
+			}) : undefined;
 			proc.stdout.on("data", (data) => {
+				if (boundedLines) { boundedLines.push(data); return; }
 				buffer += data.toString();
 				const lines = buffer.split("\n");
 				buffer = lines.pop() || "";
@@ -396,32 +421,34 @@ async function runSingleAgent(
 			});
 
 			proc.stderr.on("data", (data) => {
-				currentResult.stderr += data.toString();
+				currentResult.stderr = lightweight
+					? appendTail(currentResult.stderr, data.toString())
+					: currentResult.stderr + data.toString();
 			});
 
 			proc.on("close", (code) => {
-				if (buffer.trim()) processLine(buffer);
+				cleanup();
+				if (boundedLines) boundedLines.end();
+				else if (buffer.trim()) processLine(buffer);
 				resolve(code ?? 1);
 			});
 
-			proc.on("error", () => {
+			proc.on("error", (error) => {
+				cleanup();
+				currentResult.stderr = lightweight
+					? appendTail(currentResult.stderr, String(error))
+					: currentResult.stderr + String(error);
 				resolve(1);
 			});
 
 			if (signal) {
-				const killProc = () => {
-					wasAborted = true;
-					proc.kill("SIGTERM");
-					setTimeout(() => {
-						if (!proc.killed) proc.kill("SIGKILL");
-					}, 5000);
-				};
 				if (signal.aborted) killProc();
 				else signal.addEventListener("abort", killProc, { once: true });
 			}
 		});
 
 		currentResult.exitCode = exitCode;
+		if (outputError) throw new Error(outputError);
 		if (wasAborted) throw new Error("Subagent was aborted");
 		return currentResult;
 	} finally {
@@ -470,6 +497,14 @@ const SubagentParams = Type.Object({
 });
 
 export default function (pi: ExtensionAPI) {
+	registerScheduler(pi, async (agent, task, ctx, signal) => {
+		const result = await runSingleAgent(ctx.cwd, {
+			model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
+			thinkingLevel: ctx.thinkingLevel,
+		}, [agent], agent.name, task, undefined, undefined, signal, undefined,
+			results => ({ mode: "single", agentScope: agent.source, projectAgentsDir: null, results }), true);
+		return `${isFailedResult(result) ? "Failed" : "Completed"}: ${agent.name}\n${getResultOutput(result)}`;
+	});
 	const status = new SubagentStatus();
 	const resetStatus = (_event: unknown, ctx: import("@earendil-works/pi-coding-agent").ExtensionContext) => {
 		status.reset();
