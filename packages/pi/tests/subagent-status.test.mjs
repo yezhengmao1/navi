@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { load } from './helpers.mjs';
-const { SubagentStatus } = await load('../../../../.pi/extensions/subagent/status');
+const { SubagentStatus } = await load('../../../../.pi/extensions/agent-team/status');
 
 test('independent rows, queued/running/terminal states and next batch reset', () => {
   const status = new SubagentStatus();
@@ -72,7 +72,7 @@ test('finished status auto-hides; a new batch cancels the previous timer', async
 });
 
 test('extension loads and registers status reset hooks', async () => {
-  const { default: register } = await load('../../../../.pi/extensions/subagent/index');
+  const { default: register } = await load('../../../../.pi/extensions/agent-team/index');
   const events = new Map();
   let tool;
   register({ events: { emit() {} }, registerCommand() {}, on: (name, fn) => events.set(name, fn), registerTool: value => { tool = value; } });
@@ -87,8 +87,11 @@ test('extension loads and registers status reset hooks', async () => {
   assert.equal(result.isError, true);
   assert.ok(frames.some(lines => lines.some(line => line.includes('运行中'))));
   assert.equal(frames.at(-1)[0], '');
-  assert.match(frames.at(-1)[1], /子任务/);
-  assert.match(frames.at(-1)[2], /失败/);
+  assert.ok(frames.at(-1).some(line => /🚀.*子任务/.test(line)));
+  assert.ok(frames.at(-1).some(line => /失败/.test(line)));
+  assert.equal(frames.at(-1)[1], '┌' + '─'.repeat(78) + '┐');
+  assert.equal(frames.at(-1).at(-2), '└' + '─'.repeat(78) + '┘');
+  assert.equal(frames.at(-1).at(-1), '');
   for (const event of ['session_start', 'session_switch', 'session_shutdown']) {
     let cleared = false;
     events.get(event)({}, { mode: 'tui', ui: { setWidget: (id, lines) => {

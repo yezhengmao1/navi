@@ -83,10 +83,10 @@ test('session changes discard late guard events and persistence', async () => {
   let release;
   const ctx = { hasUI: true, cwd: '/tmp', ui: { custom: () => new Promise(resolve => { release = resolve; }) } };
   const pending = h.handlers.get('tool_call')[0]({ toolCallId: 'late', toolName: 'bash', input: { command: 'rm file' } }, ctx);
-  assert.equal(h.events.length, 1);
+  assert.equal(h.events.filter(e => e.name === 'safety-guard:timing').length, 1);
   for (const fn of h.handlers.get('session_switch')) fn();
   release({ allow: false });
   await pending;
-  assert.equal(h.events.length, 1);
+  assert.equal(h.events.filter(e => e.name === 'safety-guard:timing').length, 1);
   assert.equal(h.entries.length, 0);
 });

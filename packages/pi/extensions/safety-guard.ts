@@ -84,6 +84,34 @@ export function guardPhase<T>(phase: GuardPhase, work: () => Promise<T>): Promis
 
 export type ConfirmResult = { allow: true } | { allow: false; feedback?: string };
 
+// A listener must claim synchronously; only its explicit reply can authorize.
+export interface TeamApprovalRequest {
+	source: "safety-guard";
+	risk: RiskLevel;
+	title: string;
+	body: string;
+	toolCallId: string;
+	toolName: string;
+	input: ToolCallEvent["input"];
+	ctx: ExtensionContext;
+	handled: boolean;
+	reply(result: ConfirmResult): void;
+}
+const approvalScope = new AsyncLocalStorage<{
+	pi: ExtensionAPI;
+	toolCallId: string;
+	toolName: string;
+	input: ToolCallEvent["input"];
+	ctx: ExtensionContext;
+}>();
+
+// Keep legacy parser results and local UI wording intact, including cached
+// fallbacks. Uncertainty is never a medium-risk central approval.
+function routingRisk(level: RiskLevel, reason: string): RiskLevel {
+	return /^(没有可用的审查模型|审查模型没有配置鉴权|审查失败（|审查器没有给出明确结论)/.test(reason)
+		? "high" : level;
+}
+
 type Stop = "yes" | "no" | "feedback";
 
 export class ConfirmFeedbackDialog implements Focusable {
@@ -213,7 +241,36 @@ export async function confirmOrFeedback(
 	title: string,
 	body: string,
 	labels?: { yes?: string; no?: string },
+	risk: RiskLevel = "high",
 ): Promise<ConfirmResult> {
+	const scope = approvalScope.getStore();
+	if (scope) {
+		let settle!: (result: ConfirmResult) => void;
+		const response = new Promise<ConfirmResult>(resolve => { settle = resolve; });
+		const request: TeamApprovalRequest = {
+			source: "safety-guard", risk, title, body,
+			toolCallId: scope.toolCallId, toolName: scope.toolName,
+			input: scope.input, ctx: scope.ctx, handled: false,
+			reply: result => settle(result?.allow === true ? { allow: true } :
+				{ allow: false, feedback: result?.allow === false ? result.feedback : undefined }),
+		};
+		scope.pi.events.emit("agent-team:approval", request);
+		if (request.handled) {
+			return guardPhase("confirm", async () => {
+				const signal = scope.ctx.signal;
+				const deny = () => settle({ allow: false });
+				signal?.addEventListener("abort", deny, { once: true });
+				try {
+					if (signal?.aborted) return { allow: false };
+					const result = await response;
+					return signal?.aborted ? { allow: false } : result;
+				} finally { signal?.removeEventListener("abort", deny); }
+			});
+		}
+		// A managed member must never fall back to a local approval dialog if its relay failed to load.
+		if (process.argv.includes("--team-approval-config"))
+			return { allow: false, feedback: "Lead approval relay unavailable; not approved" };
+	}
 	const ui: ExtensionUIContext = ctx.ui;
 	if (!ctx.hasUI) return { allow: false, feedback: undefined };
 
@@ -922,8 +979,9 @@ async function confirmBlock(
 	ctx: ExtensionContext,
 	title: string,
 	body: string,
+	risk: RiskLevel = "high",
 ): Promise<boolean> {
-	const result = await confirmOrFeedback(ctx, title, body);
+	const result = await confirmOrFeedback(ctx, title, body, undefined, risk);
 	pendingFeedback = result.allow ? undefined : result.feedback;
 	return result.allow;
 }
@@ -1031,6 +1089,7 @@ export default function (pi: ExtensionAPI) {
 						ctx,
 						"🐌 命令重量审查",
 						`自动审查器将此次命令评为 ${loadLabel}重量：\n\n  ${segment.trim()}\n\n📝 理由：${reason}`,
+						undefined, routingRisk(load, reason),
 					);
 					if (!allow) {
 						return blockWithFeedback(
@@ -1119,8 +1178,14 @@ export default function (pi: ExtensionAPI) {
 
 				const riskLabel = risk === "high" ? "高" : risk === "medium" ? "中" : "低";
 
-				// medium or high: require confirmation when a UI is available.
-				if (!ctx.hasUI) {
+				const ok = await confirmBlock(
+					ctx,
+					"🤖 移动风险审查",
+					`自动审查器将此次移动评为 ${riskLabel}风险：\n\n  ${segment.trim()}\n\n📝 理由：${reason}`,
+					routingRisk(risk, reason),
+				);
+
+				if (!ok && !ctx.hasUI) {
 					return {
 						block: true,
 						reason:
@@ -1128,12 +1193,6 @@ export default function (pi: ExtensionAPI) {
 						terminate: true,
 					};
 				}
-
-				const ok = await confirmBlock(
-					ctx,
-					"🤖 移动风险审查",
-					`自动审查器将此次移动评为 ${riskLabel}风险：\n\n  ${segment.trim()}\n\n📝 理由：${reason}`,
-				);
 
 				if (!ok) {
 					return blockFromLatestFeedback(`🚫 Blocked by safety-guard: mv 未获确认（${riskLabel}风险：${reason}）。`);
@@ -1145,10 +1204,11 @@ export default function (pi: ExtensionAPI) {
 	};
 	pi.on("tool_call", async (event, ctx) => {
 		const owner = generation;
-		return trackGuard(event.toolCallId, () => checkTool(event, ctx), data => {
+		return approvalScope.run({ pi, toolCallId: event.toolCallId, toolName: event.toolName, input: event.input, ctx },
+			() => trackGuard(event.toolCallId, () => checkTool(event, ctx), data => {
 			if (owner === generation) pi.events.emit("safety-guard:timing", data);
 		}, data => {
 			if (owner === generation) pi.appendEntry("safety-guard:timing", data);
-		}, () => performance.now(), () => ctx.signal?.aborted ?? false);
+		}, () => performance.now(), () => ctx.signal?.aborted ?? false));
 	});
 }

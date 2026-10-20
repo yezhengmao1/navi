@@ -4,7 +4,7 @@ import { load } from './helpers.mjs';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-const { Scheduler, registerScheduler } = await load('../../../../.pi/extensions/subagent/scheduler');
+const { Scheduler, registerScheduler } = await load('../../../../.pi/extensions/agent-team/scheduler');
 const spec = {agent: 'test', task: 'check', intervalSeconds: 1, maxRuns: 2, timeoutSeconds: 5};
 const flush = () => new Promise(resolve => setImmediate(resolve));
 

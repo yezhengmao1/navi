@@ -1,4 +1,33 @@
-# Navi subagent
+# Navi agent-team
+
+一个插件、两种执行后端：后台 `subagent`（原 single / parallel / chain 及调度接口不变），以及 Herdr `team` 持久交互成员。目录由 `subagent` 改名为 `agent-team`；若在个人 settings 中显式配置旧路径，请改为新路径，勿同时加载两份。
+
+## 统一入口与动态团队
+
+`team` 的 `run` 操作显式选择 `backend: "background" | "pane"`；后台复用原 `subagent` 执行器，pane 模式创建持久交互成员。原有 `subagent`、`subagent_schedule` 继续兼容。
+
+```json
+{"action":"run","backend":"pane","name":"gradient-analysis","instructions":"分析梯度与 loss 的关系，不修改项目文件","task":"查找异常窗口并对齐时间序列"}
+```
+
+`/team start <目标>` 让 lead 按任务动态组队，不固定角色。成员统一放入专用 Herdr tab：每页最多 4 人，按左上、右上、左下、右下组成 2×2，第 5 人自动开下一页，不切走 lead 焦点。
+
+成员默认沿用 lead 的正常 Pi 插件、MCP 和活动工具配置，不再默认禁用联网工具或界面插件；只有显式 `readOnly:true` / `tools` 才限制能力。已有旧配置成员需要重建，`status` 会显示 `needsProfileRestart:true`。
+
+权限由 lead 集中处理：普通审批自动通过，只有 safety-guard 高危操作在 lead 弹窗请你授权；safety-guard 和标准扩展确认框会转发，不在成员里请求确认。lead 自身在团队激活后也使用相同策略。支持成员增减、任务依赖、按任务状态去重、过期丢弃的结果通知、worktree 和只读工具预设。控制操作按成员隔离，暂停即时生效；提交延迟有 15 秒观察宽限期，空闲团队自动降低轮询频率。详细接口、生命周期、安全边界和验收步骤见 **[TEAM.md](TEAM.md)**。
+
+后台也可动态定义角色，不必创建 Markdown 文件：
+
+```json
+{"definitions":[{"name":"analysis","instructions":"分析梯度与 loss 的关系"}],"agent":"analysis","task":"查找异常窗口"}
+```
+
+`definitions` 仅当前调用有效，可被 single / parallel / chain 中的 agent 名称引用；显式覆盖同名已保存角色。无模型、无真实 Herdr 操作测试：
+
+```bash
+node --test packages/pi/tests/agent-team*.test.mjs packages/pi/tests/subagent-*.test.mjs
+```
+
 
 `index.ts` 和 `agents.ts` 基于本机 Pi 1.1.0 官方示例，包含本地适配：
 `@earendil-works/pi-coding-agent/examples/extensions/subagent/`。
@@ -6,7 +35,7 @@
 版权与 MIT 许可见本目录 `LICENSE`；这两个第三方文件不适用仓库自定义许可证。
 
 在仓库根启动 Pi，审核后信任项目并 `/reload`，会自动加载本目录 `index.ts`。
-无需复制到个人配置，也不要同时加载另一份同名 `subagent` 扩展。
+团队扩展无需复制到个人配置，也不要同时加载另一份同名 `subagent` 扩展。lead 的 safety-guard 需使用带 `agent-team:approval` 接口的新版（成员复用 lead 的兼容版本）。若个人扩展是旧的复制安装，需同步其审批接口后再 `/reload`；旧版不会自动支持 lead 自身的集中策略。
 
 ## 独立状态区
 

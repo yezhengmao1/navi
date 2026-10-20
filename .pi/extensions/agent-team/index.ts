@@ -27,10 +27,12 @@ import {
 	withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text, truncateToWidth } from "@earendil-works/pi-tui";
+import { frameRows } from "./team-display.ts";
 import { Type } from "typebox";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.ts";
 import { SubagentStatus } from "./status.ts";
 import { registerScheduler } from "./scheduler.ts";
+import { registerPanes } from "./panes.ts";
 import { appendTail, BoundedLines, boundedText, finalAssistantText } from "./output.ts";
 
 const MAX_PARALLEL_TASKS = 8;
@@ -485,6 +487,12 @@ const AgentScopeSchema = StringEnum(["user", "project", "both"] as const, {
 });
 
 const SubagentParams = Type.Object({
+	definitions: Type.Optional(Type.Array(Type.Object({
+		name: Type.String({ description: "Dynamic agent name used by agent/tasks/chain" }),
+		instructions: Type.String({ description: "Task-specific role instructions; no saved role file needed" }),
+		model: Type.Optional(Type.String()),
+		tools: Type.Optional(Type.Array(Type.String())),
+	}), { maxItems: 8, description: "Ephemeral agent definitions for this call; override same-name saved roles. Not persisted." })),
 	agent: Type.Optional(Type.String({ description: "Name of the agent to invoke (for single mode)" })),
 	task: Type.Optional(Type.String({ description: "Task to delegate (for single mode)" })),
 	tasks: Type.Optional(Type.Array(TaskItem, { description: "Array of {agent, task} for parallel execution" })),
@@ -497,6 +505,7 @@ const SubagentParams = Type.Object({
 });
 
 export default function (pi: ExtensionAPI) {
+	registerPanes(pi);
 	registerScheduler(pi, async (agent, task, ctx, signal) => {
 		const result = await runSingleAgent(ctx.cwd, {
 			model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
@@ -520,6 +529,7 @@ export default function (pi: ExtensionAPI) {
 		description: [
 			"Delegate tasks to specialized subagents with isolated context.",
 			"Modes: single (agent + task), parallel (tasks array), chain (sequential with {previous} placeholder).",
+			"Optional definitions [{name, instructions, model?, tools?}] create dynamic task-specific agents without role files. Use team instead for persistent interactive Herdr panes.",
 			`Default agent scope is "user" (from ${path.join(getAgentDir(), "agents")}).`,
 			`To enable project-local agents in ${CONFIG_DIR_NAME}/agents, set agentScope: "both" (or "project").`,
 		].join(" "),
@@ -532,7 +542,17 @@ export default function (pi: ExtensionAPI) {
 				thinkingLevel: ctx.thinkingLevel,
 			};
 			const discovery = discoverAgents(ctx.cwd, agentScope);
-			const agents = discovery.agents;
+			const agents = [...discovery.agents];
+			const names = new Set<string>();
+			for (const definition of params.definitions ?? []) {
+				if (!/^[a-z][a-z0-9_-]{0,31}$/.test(definition.name) || !definition.instructions.trim() || names.has(definition.name))
+					throw new Error("Dynamic definitions require unique valid names and nonempty instructions");
+				names.add(definition.name);
+				const existing = agents.findIndex(a => a.name === definition.name);
+				if (existing >= 0) agents.splice(existing, 1);
+				agents.push({ name: definition.name, description: "Dynamic task-specific agent", systemPrompt: definition.instructions,
+					model: definition.model, tools: definition.tools, source: "user", filePath: "<inline-definition>" });
+			}
 			const confirmProjectAgents = params.confirmProjectAgents ?? true;
 
 			const hasChain = (params.chain?.length ?? 0) > 0;
@@ -607,12 +627,14 @@ export default function (pi: ExtensionAPI) {
 				if (!lines) { ctx.ui.setWidget("subagent-status", undefined); return; }
 				ctx.ui.setWidget("subagent-status", (_tui, theme) => ({
 					render(width) {
-						const output = ["", truncateToWidth(theme.fg("accent", lines[0]), width)];
-						for (const item of lines.slice(1)) {
+						const output = [""];
+						const rows = lines.slice(1).map(item => {
 							const color = item.startsWith("[+]") ? "success" : item.startsWith("[!]") ? "error"
 								: item.startsWith("[>]") ? "accent" : "muted";
-							output.push(truncateToWidth(theme.fg(color, `  ${item}`), width));
-						}
+							return theme.fg(color, item);
+						});
+						output.push(...frameRows([theme.fg("accent", `🚀 ${lines[0]}`), "", ...rows], width,
+							line => theme.fg("dim", line)).map(line => theme.bg ? theme.bg("customMessageBg", line) : line), "");
 						return output;
 					},
 					invalidate() {},

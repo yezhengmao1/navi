@@ -36,14 +36,14 @@ Skills 统一使用 `/skill:<name> [参数]`；不再提供同名转发短命令
 |------|------|
 | `.agents/skills/` | 唯一 skill 来源，Pi 原生发现，16 个 skills |
 | `.pi/agents/` | `dlc-inspector`、`swanlab-analyst`、`source-researcher` 定义 |
-| `.pi/extensions/subagent/` | Pi 官方示例扩展，使项目 agents 可独立/并行执行 |
+| `.pi/extensions/agent-team/` | 统一 agent 插件：后台 subagent、定时任务与 Herdr 动态 pane 团队 |
 | `packages/pi/extensions/magic-ui/` | 单一 UI 扩展入口，包含字标、编辑器、状态栏、折叠显示、通用问卷和额度查询 |
 | `packages/pi/` | 可选的通用 Pi 扩展包：界面、命令确认、会话与主题，附安装脚本和测试 |
 | `mcp/siyuan/` | 思源 MCP server |
 
 `.pi/` 放项目直接加载资源，`packages/pi/` 放可独立安装的通用扩展，`.agents/skills/` 放业务流程。不要将通用扩展再复制到 `.pi/extensions/`，以免与全局副本重复加载。安装与迁移方式见 [Pi 扩展包说明](packages/pi/README.md)。
 
-没有重复复制到 `.pi/skills`，也不需要额外 skills 搜索路径。子 agent 调用需显式设置 `agentScope: "project"`，不指定模型时继承主会话配置。详情见 [Skills 总览](.agents/skills/README.md) 和 [subagent 说明](.pi/extensions/subagent/README.md)。
+没有重复复制到 `.pi/skills`，也不需要额外 skills 搜索路径。子 agent 调用需显式设置 `agentScope: "project"`，不指定模型时继承主会话配置。详情见 [Skills 总览](.agents/skills/README.md) 和 [agent-team 说明](.pi/extensions/agent-team/README.md)。
 
 专用 agent 不是沙箱。监控和巡检默认只跑一轮，持续运行需另行配置外部调度。
 
@@ -92,4 +92,4 @@ python3 -m unittest discover -s .agents/skills/okx -p 'test_*.py'
 ## License
 
 本项目：[Hey-Listen License (HLL)](LICENSE)。
-Pi 官方 subagent 示例：MIT，见 [.pi/extensions/subagent/LICENSE](.pi/extensions/subagent/LICENSE)。
+Pi 官方 subagent 示例：MIT，见 [.pi/extensions/agent-team/LICENSE](.pi/extensions/agent-team/LICENSE)。

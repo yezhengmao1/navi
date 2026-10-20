@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { load } from './helpers.mjs';
-const { BoundedLines, boundedText, appendTail, finalAssistantText } = await load('../../../../.pi/extensions/subagent/output');
+const { BoundedLines, boundedText, appendTail, finalAssistantText } = await load('../../../../.pi/extensions/agent-team/output');
 
 test('bounded lines preserve split UTF-8, multiple lines and unterminated final line', () => {
  const lines = [];
@@ -43,7 +43,7 @@ test('output retains bounded text only and a bounded stderr tail', () => {
 });
 
 test('real child process: lightweight retains no history, full mode unchanged, usage preserved', async t => {
- const { runSingleAgent } = await load('../../../../.pi/extensions/subagent/index');
+ const { runSingleAgent } = await load('../../../../.pi/extensions/agent-team/index');
  const dir = mkdtempSync(join(tmpdir(), 'pi-output-test-'));
  const script = join(dir, 'child.cjs');
  const original = process.argv[1];

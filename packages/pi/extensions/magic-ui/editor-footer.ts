@@ -606,24 +606,25 @@ export default function (pi: ExtensionAPI) {
 					if (quota) items.push(widgetTheme.fg("accent", quota));
 					const statusLines: string[] = [];
 					if (subagentLines?.length) {
-						statusLines.push(truncateToWidth(widgetTheme.fg("accent", widgetTheme.bold(subagentLines[0])), width));
-						const rows = subagentLines.slice(1);
-						const boxWidth = Math.min(width, Math.max(0, ...rows.map(line => visibleWidth(line))) + 4);
+						statusLines.push("");
+						const title = `🚀 ${subagentLines[0]}`;
+						const rows = ["", title, "", ...subagentLines.slice(1), ""];
+						const boxWidth = Math.max(0, width);
 						const innerWidth = Math.max(0, boxWidth - 4);
 						const border = (text: string) => widgetTheme.fg("dim", text);
 						if (boxWidth >= 6) statusLines.push(border(`┌${"─".repeat(boxWidth - 2)}┐`));
 						for (const line of rows) {
-							const color = line.startsWith("[+]") ? "success"
+							const color = line === title ? "accent" : line.startsWith("[+]") ? "success"
 								: line.startsWith("[!]") ? "error" : line.startsWith("[>]") ? "accent" : "muted";
 							const text = truncateToWidth(line, boxWidth >= 6 ? innerWidth : Math.max(0, width));
-							const styled = widgetTheme.fg(color, text);
+							const styled = widgetTheme.fg(color, line === title ? widgetTheme.bold(text) : text);
 							statusLines.push(boxWidth >= 6
 								? border("│ ") + styled + " ".repeat(innerWidth - visibleWidth(text)) + border(" │")
 								: styled);
 						}
 						if (boxWidth >= 6) statusLines.push(border(`└${"─".repeat(boxWidth - 2)}┘`));
 					}
-					return [...statusLines, ...(statusLines.length ? [""] : []),
+					return [...statusLines.map(line => line && widgetTheme.bg ? widgetTheme.bg("customMessageBg", line) : line), ...(statusLines.length ? [""] : []),
 						...wrapTextWithAnsi(items.join(widgetTheme.fg("dim", FOOTER_SEPARATOR)), Math.max(1, width))];
 				},
 			}), { placement: "aboveEditor" });
