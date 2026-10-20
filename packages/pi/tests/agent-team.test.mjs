@@ -8,7 +8,7 @@ const { TeamController } = await load('../../../../.pi/extensions/agent-team/tea
 function fixture() {
   const calls = [], saves = [], notices = [], confirms = [], agents = new Map();
   let count = 0;
-  const control = { approve: true, failStart: false, failPrompt: false, replaceOnConfirm: false, now: 100000 };
+  const control = { approve: true, failStart: false, failPrompt: false, replaceOnConfirm: false, now: 100000, workspaces: [{ workspace_id: 'w1' }, { workspace_id: 'w2' }] };
   const state = { version: 2, scope: 'test', label: 'team', workspace: 'w1', anchor: 'w1:p1', members: [], tasks: [], notify: 'wake', resources: [] };
   const io = {
     check() {}, now() { return control.now; }, save(s) { saves.push(s); }, notify(text, wake) { notices.push({ text, wake }); },
@@ -20,6 +20,7 @@ function fixture() {
     async git(args) { calls.push(['git', ...args]); return args.includes('rev-parse') ? '/repo\n' : ''; },
     async herdr(args) {
       calls.push(args);
+      if (args[0] === 'workspace' && args[1] === 'list') return { workspaces: control.workspaces };
       if (args[0] === 'agent' && args[1] === 'list') return { agents: structuredClone([...agents.values()]) };
       if (args[1] === 'layout') return layoutFor(state.pages.find(p => p.panes.includes(args[3])));
       if (args[1] === 'split') return { pane: { pane_id: `w1:p${++count + 1}` } };
@@ -204,6 +205,54 @@ test('new workspace root, custom cwd and read-only tool preset', async () => {
   const start = f.calls.find(c => c[1] === 'start');
   for (const arg of ['--no-extensions', '--extension', '/trusted/herdr-agent-state.ts', '--no-mcp', '--tools', 'read,grep,find,ls']) assert.ok(start.includes(arg));
   assert.equal(f.confirms.length, 1);
+});
+
+test('closed team can select a new location, preserve history and allocate a fresh tab', async () => {
+  const f = fixture(); const old = await f.spawn();
+  const task = f.c.enqueue({ name: old.name, task: 'Review' });
+  task.state = 'completed'; task.output = 'Preserved review evidence';
+  await f.c.stop(old.name, true);
+  const oldPage = f.state.pages[0];
+  oldPage.state = 'ready'; // Even a stale reusable page must not be reused by a new round.
+  const before = f.calls.length;
+  await f.c.create({ workspace: 'w1', topology: 'tab', label: 'new review' }, '/repo');
+  const next = await f.spawn({ name: 'analysis-v2' });
+  assert.notEqual(next.tab, old.tab); assert.equal(next.slot, 1);
+  assert.equal(oldPage.state, 'retired');
+  assert.equal(f.state.members[0].state, 'closed');
+  assert.equal(f.c.taskDetail(task.id).output, 'Preserved review evidence');
+  assert.ok(f.calls.slice(before).some(c => c[0] === 'tab' && c[1] === 'create' && c.includes('--no-focus')));
+  assert.ok(!f.calls.slice(before).some(c => c[1] === 'split' || c[1] === 'close'));
+});
+
+test('missing workspace reconciliation retires uncertain pages but keeps intents and task results', async () => {
+  const f = fixture(); const m = await f.spawn(); await f.c.stop(m.name, true);
+  f.state.workspace = 'gone';
+  const pending = { workspace: 'gone', label: 'old', panes: [], state: 'uncertain', intent: { operation: 'create', slot: 1, cwd: '/repo' } };
+  f.state.pages.push(pending);
+  await f.c.create({ workspace: 'w1', topology: 'current' }, '/repo');
+  assert.equal(f.state.workspace, 'w1'); assert.equal(pending.state, 'retired');
+  assert.equal(pending.intent.operation, 'create');
+  await f.spawn({ name: 'new-audit' });
+  assert.equal(f.state.pages.at(-1).workspace, 'w1');
+});
+
+test('rebuild refuses live members, unresolved tasks, live ambiguous layouts and malformed workspace lists', async () => {
+  const f = fixture(); const m = await f.spawn();
+  await assert.rejects(f.c.create({ workspace: 'w1' }, '/repo'), /nonclosed members/);
+  await f.c.stop(m.name, true);
+  f.state.tasks.push({ id: 'unfinished', member: m.name, state: 'uncertain', dependsOn: [], text: 'Check effects' });
+  await assert.rejects(f.c.create({ workspace: 'w1' }, '/repo'), /unresolved tasks/);
+  f.state.tasks[0].state = 'failed';
+  f.state.pages[0].state = 'uncertain'; f.state.pages[0].workspace = 'w1';
+  const before = structuredClone(f.state);
+  await assert.rejects(f.c.create({ workspace: 'w1' }, '/repo'), /existing workspace/);
+  assert.deepEqual(f.state, before);
+  f.control.workspaces = null;
+  await assert.rejects(f.c.create({ workspace: 'w1' }, '/repo'), /Cannot verify/);
+  assert.deepEqual(f.state, before);
+  await assert.rejects(f.c.recover(m.name), /closed and cannot be recovered/);
+  await assert.rejects(f.c.recover(undefined), /requires a member name/);
 });
 
 test('failed start persists recoverable member; no automatic respawn', async () => {

@@ -108,13 +108,30 @@ export class TeamController {
   }
   async create(p: any, cwd: string) {
     this.io.check();
-    if (this.state.members.length || this.state.tasks.length || this.state.resources.length)
-      throw new Error('Team already has resources. Reuse it or start another lead session.');
+    const rebuilding = !!(this.state.members.length || this.state.tasks.length || this.state.resources.length || this.state.pages?.length);
+    if (rebuilding && this.state.members.some(m => m.state !== 'closed'))
+      throw new Error('Team still has nonclosed members. Reuse them or close them before creating a new team location.');
+    if (rebuilding && this.state.tasks.some(t => !['completed', 'failed', 'cancelled'].includes(t.state)))
+      throw new Error('Team has unresolved tasks. Inspect evidence and resolve/cancel them before rebuilding; tasks will not be replayed.');
     if (!isAbsolute(cwd)) throw new Error('cwd must be absolute');
     const label = p.label ?? this.state.label;
     const topology = p.topology ?? 'current';
     if (!['current', 'tab', 'workspace'].includes(topology)) throw new Error('Unknown topology');
     if (!p.workspace) throw new Error('Caller workspace ID unavailable');
+    if (rebuilding) {
+      const ambiguous = (this.state.pages ?? []).filter(page => ['pending', 'uncertain'].includes(page.state));
+      if (ambiguous.length) {
+        const result = await this.io.herdr(['workspace', 'list']);
+        this.io.check();
+        if (!Array.isArray(result?.workspaces) || result.workspaces.some((w: any) => typeof w.workspace_id !== 'string' || !w.workspace_id))
+          throw new Error('Cannot verify old workspaces; refusing to discard ambiguous allocation state.');
+        const live = new Set(result.workspaces.map((w: any) => w.workspace_id));
+        if (ambiguous.some(page => live.has(page.workspace)))
+          throw new Error('Old layout is pending/uncertain in an existing workspace. Inspect and reconcile it before rebuilding.');
+        // Missing workspaces prove these old allocation intents cannot own live panes.
+        // Keep their full history; retire it only after successful location creation.
+      }
+    }
     let workspace = p.workspace;
     if (topology === 'workspace') {
       if (!await this.io.confirm('Create team location?', `Create ${topology} “${label}” in ${cwd}? Focus stays here.`))
@@ -127,6 +144,9 @@ export class TeamController {
       workspace = result.workspace.workspace_id;
       this.state.resources.push({ kind: topology, pane, state: 'created' });
     }
+    // A new round must start on fresh dedicated tabs, never fill an old page.
+    // Preserve members, task evidence, resources and allocation intents for inspection.
+    if (rebuilding) for (const page of this.state.pages ?? []) page.state = 'retired';
     this.state.workspace = workspace; this.state.cwd = cwd; this.state.label = label;
     if (p.notify) this.state.notify = p.notify;
     this.save();
@@ -214,7 +234,9 @@ export class TeamController {
     return this.io.herdr(['agent', 'read', m.target, '--source', 'recent-unwrapped', '--lines', '120']);
   }
   async recover(name: string) {
+    if (!name) throw new Error('recover requires a member name; it is not a team reset. Use create after closing members and resolving tasks.');
     const m = this.member(name);
+    if (m.state === 'closed') throw new Error(`${name} is closed and cannot be recovered. Spawn a new member with a new name; if the old workspace is gone, use create first.`);
     if (!await this.io.confirm('Recover team member?', `Bind ${m.target} in ${m.pane} only if it is still the member you started. This never resubmits uncertain tasks.`)) throw new Error('Cancelled');
     await this.live(m, true); m.state = 'ready'; this.save(); return m;
   }

@@ -149,6 +149,14 @@ Bare `/team` toggles the Chinese status widget above the editor: show when hidde
 
 `/team pause` and `/team resume` control monitoring. `status` reconciles state but does not dispatch queued work. Results and task states persist; changed task outputs are saved in separate session entries once, not repeated in every metadata snapshot. Old “ready” badges are never treated as proof of live identity or success.
 
+## Rebuild after closing members
+
+A closed member's terminal process is gone: `recover` cannot restart it, and a missing member name is not a whole-team recovery request. Spawn a new member with a new name.
+
+If the old workspace has disappeared, use `team {"action":"create","topology":"tab","label":"new review"}` in the same lead after all members are closed and every old task is completed, failed or cancelled. This selects the caller's workspace; the first subsequent spawn creates a **new dedicated tab**. All old pages are retired, so even unused slots in an old tab are not reused. The usual four-members-per-tab layout still applies. Member records, task results, worktree/branch records and allocation intents are retained; no historical tasks are replayed and no old panes are closed by this operation.
+
+Pending/uncertain pages can only be retired this way when a valid live workspace listing confirms their workspaces no longer exist. An existing ambiguous workspace, malformed listing, nonclosed member or unresolved task blocks rebuilding. Inspect and resolve those states rather than blindly resetting them. This is a location rebind, not deletion of history.
+
 ## Stop, close, and recovery
 
 ```text
