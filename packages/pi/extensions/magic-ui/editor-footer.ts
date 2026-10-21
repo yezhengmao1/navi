@@ -351,6 +351,15 @@ export function renderSelectionCard(card: MagicSelectionCard): string[] {
 	return lines;
 }
 
+export function renderSubagentStatusCard(lines: string[], width: number, theme: any): string[] {
+	const icons: Record<string, string> = { '>': '⏳', '+': '✅', '!': '❌', 'x': '⏹️', '-': '⏭️', ' ': '◷' };
+	return renderSelectionCard({
+		theme, width, title: lines[0] ?? '🤖 子任务', cursor: -1,
+		items: lines.slice(1).map(line => ({ label: line.replace(/^\[([>+!x\- ])\]/, (_match, state) => icons[state]) })),
+		hints: ['后台执行 · 状态随任务自动更新'],
+	});
+}
+
 export default function (pi: ExtensionAPI) {
 	// Opt-in renderer: other extensions keep ownership of input and selection state.
 	const unsubscribeCard = pi.events.on("magic-ui:selection-card", (data) => {
@@ -560,12 +569,10 @@ export default function (pi: ExtensionAPI) {
 			let today: number | undefined;
 			let busy = false;
 			let disposed = false;
-			let subagentLines: string[] | undefined;
+			// Legacy publishers are acknowledged, but progress now lives only in tool-result cards.
 			const unsubscribeSubagents = pi.events.on("magic-ui:subagent-status", (data) => {
 				const event = data as { lines?: string[]; handled: boolean };
-				subagentLines = event.lines;
 				event.handled = true;
-				tui.requestRender();
 			});
 			const refresh = async () => {
 				if (busy || disposed) return;
@@ -604,28 +611,7 @@ export default function (pi: ExtensionAPI) {
 					];
 					const quota = _footerData.getExtensionStatuses().get("codex-quota");
 					if (quota) items.push(widgetTheme.fg("accent", quota));
-					const statusLines: string[] = [];
-					if (subagentLines?.length) {
-						statusLines.push("");
-						const title = `🚀 ${subagentLines[0]}`;
-						const rows = ["", title, "", ...subagentLines.slice(1), ""];
-						const boxWidth = Math.max(0, width);
-						const innerWidth = Math.max(0, boxWidth - 4);
-						const border = (text: string) => widgetTheme.fg("dim", text);
-						if (boxWidth >= 6) statusLines.push(border(`┌${"─".repeat(boxWidth - 2)}┐`));
-						for (const line of rows) {
-							const color = line === title ? "accent" : line.startsWith("[+]") ? "success"
-								: line.startsWith("[!]") ? "error" : line.startsWith("[>]") ? "accent" : "muted";
-							const text = truncateToWidth(line, boxWidth >= 6 ? innerWidth : Math.max(0, width));
-							const styled = widgetTheme.fg(color, line === title ? widgetTheme.bold(text) : text);
-							statusLines.push(boxWidth >= 6
-								? border("│ ") + styled + " ".repeat(innerWidth - visibleWidth(text)) + border(" │")
-								: styled);
-						}
-						if (boxWidth >= 6) statusLines.push(border(`└${"─".repeat(boxWidth - 2)}┘`));
-					}
-					return [...statusLines.map(line => line && widgetTheme.bg ? widgetTheme.bg("customMessageBg", line) : line), ...(statusLines.length ? [""] : []),
-						...wrapTextWithAnsi(items.join(widgetTheme.fg("dim", FOOTER_SEPARATOR)), Math.max(1, width))];
+					return wrapTextWithAnsi(items.join(widgetTheme.fg("dim", FOOTER_SEPARATOR)), Math.max(1, width));
 				},
 			}), { placement: "aboveEditor" });
 			return {

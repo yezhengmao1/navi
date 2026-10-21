@@ -71,6 +71,21 @@ test('finished status auto-hides; a new batch cancels the previous timer', async
   assert.deepEqual(lines, ['reset']);
 });
 
+test('subagent call headings use Chinese for mode and configuration scope', async () => {
+  const { default: register } = await load('../../../../.pi/extensions/agent-team/index');
+  let tool;
+  register({ events: { emit() {} }, registerCommand() {}, on() {}, registerTool: value => { tool = value; } });
+  const theme = { fg: (_color, text) => text, bold: text => text };
+  const render = args => tool.renderCall(args, theme).render(100).join('\n');
+  const parallel = render({ tasks: [{ agent: 'alpha', task: '检查正确性' }], agentScope: 'user' });
+  assert.match(parallel, /🤝 并行任务 · 0\/1 项完成/);
+  assert.doesNotMatch(parallel, /alpha|检查正确性|🎯/);
+  assert.equal(parallel.split('\n').length, 1); assert.match(parallel, /用户配置/);
+  assert.doesNotMatch(parallel, /subagent|parallel|\[user\]/);
+  assert.match(render({ chain: [{ agent: 'alpha', task: '检查' }] }), /🔗 串行任务 · 0\/1 步完成/);
+  assert.match(render({ agent: 'alpha', task: '检查' }), /子任务 · alpha/);
+});
+
 test('extension loads and registers status reset hooks', async () => {
   const { default: register } = await load('../../../../.pi/extensions/agent-team/index');
   const events = new Map();
@@ -85,13 +100,8 @@ test('extension loads and registers status reset hooks', async () => {
         ? content({}, { fg: (_color, text) => text }).render(80) : content) },
     });
   assert.equal(result.isError, true);
-  assert.ok(frames.some(lines => lines.some(line => line.includes('运行中'))));
-  assert.equal(frames.at(-1)[0], '');
-  assert.ok(frames.at(-1).some(line => /🚀.*子任务/.test(line)));
-  assert.ok(frames.at(-1).some(line => /失败/.test(line)));
-  assert.equal(frames.at(-1)[1], '┌' + '─'.repeat(78) + '┐');
-  assert.equal(frames.at(-1).at(-2), '└' + '─'.repeat(78) + '┘');
-  assert.equal(frames.at(-1).at(-1), '');
+  assert.ok(frames.length > 0, 'clear any legacy status widget');
+  assert.ok(frames.every(frame => frame === undefined), 'progress must stay in tool cards, never recreate a footer widget');
   for (const event of ['session_start', 'session_switch', 'session_shutdown']) {
     let cleared = false;
     events.get(event)({}, { mode: 'tui', ui: { setWidget: (id, lines) => {

@@ -363,7 +363,7 @@ export function registerPanes(pi: ExtensionAPI) {
         }
       }
       const details = await execute(p.action === 'run' ? { ...p, action: 'spawn' } : p, ctx, signal);
-      const text = p.action === 'read' && typeof details?.text === 'string' ? details.text : JSON.stringify(details, null, 2);
+      const text = p.action === 'read' && !p.id && typeof details?.text === 'string' ? details.text : JSON.stringify(details, null, 2);
       return { content: [{ type: 'text', text: text.length > 24000 ? text.slice(0, 24000) + '\n[Truncated; use team read with id/name for details.]' : text }], details };
     },
   });

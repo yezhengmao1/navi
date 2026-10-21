@@ -39,7 +39,6 @@ export function formatTeamStatus(data: any, memberLimit = 8, taskLimit = 6): str
     if (t.waitingFor?.length) lines.push(`    等待：${t.waitingFor.map(clean).join('、')}`);
   }
   if (tasks.length > taskLimit) lines.push(`  … 另有 ${tasks.length - taskLimit} 项任务`);
-  lines.push('', '/team read <成员> · /team task <ID> · /team hide 隐藏面板');
   return lines.join('\n');
 }
 
@@ -62,14 +61,39 @@ export function formatTeamResult(data: any, expanded = false): string | undefine
 }
 
 /** Full available width, with one space of inner padding. Tiny terminals omit the frame. */
-export function frameRows(rows: string[], width: number, border: (text: string) => string): string[] {
+export function frameRows(rows: string[], width: number, border: (text: string) => string, verticalPadding = true, style: 'solid' | 'dashed' = 'solid'): string[] {
   width = Math.max(0, width);
   if (width < 6) return rows.map(line => truncateToWidth(line, width));
   const inner = width - 4;
-  return [border(`┌${'─'.repeat(width - 2)}┐`), ...['', ...rows, ''].map(line => {
+  const horizontal = style === 'dashed' ? '╌' : '─';
+  const vertical = style === 'dashed' ? '╎' : '│';
+  return [border(`┌${horizontal.repeat(width - 2)}┐`), ...(verticalPadding ? ['', ...rows, ''] : rows).map(line => {
     const text = truncateToWidth(line, inner);
-    return border('│ ') + text + ' '.repeat(Math.max(0, inner - visibleWidth(text))) + border(' │');
-  }), border(`└${'─'.repeat(width - 2)}┘`)];
+    return border(`${vertical} `) + text + ' '.repeat(Math.max(0, inner - visibleWidth(text))) + border(` ${vertical}`);
+  }), border(`└${horizontal.repeat(width - 2)}┘`)];
+}
+
+/** Questionnaire-style status card; deliberately no background fill or selected row. */
+export function subagentStatusPanel(lines: string[], width: number, theme: any): string[] {
+  width = Math.max(0, Math.floor(width));
+  if (!width) return [];
+  const framed = width >= 6, inner = framed ? width - 4 : width;
+  const border = (text: string) => theme.fg('border', text);
+  const row = (text: string) => {
+    const body = truncateToWidth(text, inner, '…', true);
+    return framed ? border('│') + ' ' + body + ' ' + border('│') : body;
+  };
+  const title = lines[0] ?? '🤖 子任务';
+  const output = framed ? [border('┌' + '─'.repeat(width - 2) + '┐')] : [];
+  output.push(row(theme.fg('accent', theme.bold ? theme.bold(title) : title)));
+  const rule = () => { if (framed) output.push(border('├' + '─'.repeat(width - 2) + '┤')); };
+  rule();
+  const icons: Record<string, string> = { '>': '⏳', '+': '✅', '!': '❌', 'x': '⏹️', '-': '⏭️', ' ': '◷' };
+  for (const line of lines.slice(1)) output.push(row('  ' + line.replace(/^\[([>+!x\- ])\]/, (_match, state) => icons[state])));
+  rule();
+  output.push(row(theme.fg('muted', '后台执行 · 状态随任务自动更新')));
+  if (framed) output.push(border('└' + '─'.repeat(width - 2) + '┘'));
+  return output;
 }
 
 /** Render-time theme evaluation and terminal-column truncation, including CJK. */
@@ -78,6 +102,6 @@ export function teamPanel(text: string, theme: any) {
     const [title, ...rows] = text.split('\n');
     const styled = [theme.fg('accent', title), '', ...rows.map(line => theme.fg(/✗/.test(line) ? 'error' : /[!?◇]/.test(line) ? 'warning' : /✓/.test(line) ? 'success' : 'text', line))];
     const framed = frameRows(styled, width, line => theme.fg('dim', line));
-    return ['', ...framed.map(line => theme.bg ? theme.bg('customMessageBg', line) : line), ''];
+    return ['', ...framed, ''];
   } };
 }

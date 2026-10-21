@@ -14,6 +14,20 @@ test('terminal reads are literal text, including Unicode, empty output and JSON-
   assert.throws(() => decodeHerdrResponse(['agent', 'get', 'member'], 'not JSON'));
 });
 
+test('completion notices are Chinese status summaries, never terminal banner excerpts', () => {
+  const pending = new PendingTeamNotices();
+  const output = '███ NAVI banner Hey Listen! [Skills]\\nActual report at the end';
+  const state = { label: '团队 UI 演示', notify: 'wake', tasks: [
+    { id: 'task-ui', member: 'ui-pane-a', state: 'review', output },
+  ] };
+  pending.add([{ id: 'task-ui', state: 'review' }]);
+  const notice = pending.take(state);
+  assert.match(notice.content, /待验收 · ui-pane-a · task-ui/);
+  assert.match(notice.content, /待验收不代表成功/);
+  assert.doesNotMatch(notice.content, /NAVI|Hey Listen|Skills|Actual report|Use team|Team /);
+  assert.equal(state.tasks[0].output, output, 'original evidence remains untouched');
+});
+
 test('pending notices revalidate current task state, coalesce by ID, and use current evidence/mode', () => {
   const pending = new PendingTeamNotices();
   const state = { label: 'team', notify: 'wake', tasks: [
@@ -175,6 +189,11 @@ test('busy lead does not accumulate follow-ups; resolved notices disappear befor
     assert.equal(f.sent.length, 0);
     const evidence = await f.invoke({ action: 'read', id: 'task-a' });
     assert.equal(evidence.details.output, '│ Report from a\nVerified findings');
+    const modelEvidence = JSON.parse(evidence.content[0].text);
+    assert.equal(modelEvidence.id, 'task-a');
+    assert.equal(modelEvidence.output, evidence.details.output, 'read by id must expose evidence, not only the task instruction');
+    const terminal = await f.invoke({ action: 'read', name: 'a' });
+    assert.equal(terminal.content[0].text, '│ Report from a\nVerified findings');
     await f.invoke({ action: 'resolve', id: 'task-a', outcome: 'completed', summary: 'Checked A' });
     await f.invoke({ action: 'resolve', id: 'task-b', outcome: 'failed', summary: 'Not sufficient' });
     assert.equal(f.boundary(), undefined);

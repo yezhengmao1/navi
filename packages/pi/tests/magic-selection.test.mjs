@@ -16,7 +16,7 @@ const jiti = createJiti(import.meta.url, { alias: {
   "@earendil-works/pi-coding-agent": join(root, "dist/index.js"),
   "@earendil-works/pi-tui": require.resolve("@earendil-works/pi-tui"),
 } });
-const { renderSelectionCard, default: extension } = await jiti.import(fileURLToPath(new URL("../extensions/magic-ui/editor-footer.ts", import.meta.url)));
+const { renderSelectionCard, renderSubagentStatusCard, default: extension } = await jiti.import(fileURLToPath(new URL("../extensions/magic-ui/editor-footer.ts", import.meta.url)));
 const { visibleWidth, stripTerminalSequences } = await import(require.resolve("@earendil-works/pi-tui"));
 const theme = {
   fg: (_, text) => `\x1b[36m${text}\x1b[39m`,
@@ -50,6 +50,20 @@ test("card shows borders, groups, checkboxes, focus, warning and hints", () => {
   for (const text of ["┌", "┘", "信息源", "输出方式", "操作", "[✓] HF Papers", "› [ ] 推送飞书", "请至少选择一个信息源。", "Esc 取消"])
     assert.ok(plain.includes(text), text);
   assert.ok(lines.some(line => line.includes("\x1b[44m")));
+});
+
+test('subagent status shares questionnaire framing without a background or duplicate title emoji', () => {
+  const status = ['🤖 子任务  0/2', '[>] 运行中  weight-launcher-resume', '[+] 已完成  checker'];
+  const transparent = { ...theme, bg() { assert.fail('status must not paint a background'); } };
+  for (const width of [1, 5, 6, 20, 100]) {
+    const lines = renderSubagentStatusCard(status, width, transparent);
+    for (const line of lines) assert.ok(visibleWidth(line) <= width);
+    if (width >= 6) for (const line of lines) assert.equal(visibleWidth(line), width);
+  }
+  const text = renderSubagentStatusCard(status, 100, transparent).map(stripTerminalSequences).join('\n');
+  assert.match(text, /🤖 子任务/); assert.match(text, /├─+┤/);
+  assert.match(text, /⏳ 运行中/); assert.match(text, /✅ 已完成/);
+  assert.doesNotMatch(text, /🚀|\[>\]|\[\+\]/);
 });
 
 test("renderer event responds synchronously and removes listener at shutdown", () => {
