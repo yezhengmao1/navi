@@ -28,6 +28,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { frameRows } from "./team-display.ts";
+import { renderChainCards } from "./chain-display.ts";
 import { Type } from "typebox";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.ts";
 import { SubagentStatus } from "./status.ts";
@@ -169,6 +170,7 @@ interface SingleResult {
 
 interface SubagentDetails {
 	mode: "single" | "parallel" | "chain";
+	plannedSteps?: number;
 	agentScope: AgentScope;
 	projectAgentsDir: string | null;
 	results: SingleResult[];
@@ -564,6 +566,7 @@ export default function (pi: ExtensionAPI) {
 				(mode: "single" | "parallel" | "chain") =>
 				(results: SingleResult[]): SubagentDetails => ({
 					mode,
+					...(mode === "chain" ? { plannedSteps: params.chain?.length } : {}),
 					agentScope,
 					projectAgentsDir: discovery.projectAgentsDir,
 					results,
@@ -826,8 +829,8 @@ export default function (pi: ExtensionAPI) {
 			const scope: AgentScope = args.agentScope ?? "user";
 			if (args.chain && args.chain.length > 0) {
 				let text =
-					theme.fg("toolTitle", theme.bold("subagent ")) +
-					theme.fg("accent", `chain (${args.chain.length} steps)`) +
+					theme.fg("toolTitle", theme.bold("🔗 subagent ")) +
+					theme.fg("accent", `串行任务 · ${args.chain.length} 步`) +
 					theme.fg("muted", ` [${scope}]`);
 				for (let i = 0; i < Math.min(args.chain.length, 3); i++) {
 					const step = args.chain[i];
@@ -839,7 +842,7 @@ export default function (pi: ExtensionAPI) {
 						theme.fg("muted", `${i + 1}.`) +
 						" " +
 						theme.fg("accent", step.agent) +
-						theme.fg("dim", ` ${preview}`);
+						theme.fg("dim", `\n     🎯 ${preview.replace(/\s+/g, ' ')}`);
 				}
 				if (args.chain.length > 3) text += `\n  ${theme.fg("muted", `... +${args.chain.length - 3} more`)}`;
 				return new Text(text, 0, 0);
@@ -963,85 +966,15 @@ export default function (pi: ExtensionAPI) {
 			};
 
 			if (details.mode === "chain") {
-				const successCount = details.results.filter((r) => r.exitCode === 0).length;
-				const icon = successCount === details.results.length ? theme.fg("success", "✓") : theme.fg("error", "✗");
-
-				if (expanded) {
-					const container = new Container();
-					container.addChild(
-						new Text(
-							icon +
-								" " +
-								theme.fg("toolTitle", theme.bold("chain ")) +
-								theme.fg("accent", `${successCount}/${details.results.length} steps`),
-							0,
-							0,
-						),
-					);
-
-					for (const r of details.results) {
-						const rIcon = r.exitCode === 0 ? theme.fg("success", "✓") : theme.fg("error", "✗");
-						const displayItems = getDisplayItems(r.messages);
-						const finalOutput = getFinalOutput(r.messages);
-
-						container.addChild(new Spacer(1));
-						container.addChild(
-							new Text(
-								`${theme.fg("muted", `─── Step ${r.step}: `) + theme.fg("accent", r.agent)} ${rIcon}`,
-								0,
-								0,
-							),
-						);
-						container.addChild(new Text(theme.fg("muted", "Task: ") + theme.fg("dim", r.task), 0, 0));
-
-						// Show tool calls
-						for (const item of displayItems) {
-							if (item.type === "toolCall") {
-								container.addChild(
-									new Text(
-										theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg.bind(theme)),
-										0,
-										0,
-									),
-								);
-							}
-						}
-
-						// Show final output as markdown
-						if (finalOutput) {
-							container.addChild(new Spacer(1));
-							container.addChild(new Markdown(finalOutput.trim(), 0, 0, mdTheme));
-						}
-
-						const stepUsage = formatUsageStats(r.usage, r.model);
-						if (stepUsage) container.addChild(new Text(theme.fg("dim", stepUsage), 0, 0));
-					}
-
-					const usageStr = formatUsageStats(aggregateUsage(details.results));
-					if (usageStr) {
-						container.addChild(new Spacer(1));
-						container.addChild(new Text(theme.fg("dim", `Total: ${usageStr}`), 0, 0));
-					}
-					return container;
-				}
-
-				// Collapsed view
-				let text =
-					icon +
-					" " +
-					theme.fg("toolTitle", theme.bold("chain ")) +
-					theme.fg("accent", `${successCount}/${details.results.length} steps`);
-				for (const r of details.results) {
-					const rIcon = r.exitCode === 0 ? theme.fg("success", "✓") : theme.fg("error", "✗");
-					const displayItems = getDisplayItems(r.messages);
-					text += `\n\n${theme.fg("muted", `─── Step ${r.step}: `)}${theme.fg("accent", r.agent)} ${rIcon}`;
-					if (displayItems.length === 0) text += `\n${theme.fg("muted", "(no output)")}`;
-					else text += `\n${renderDisplayItems(displayItems, 5)}`;
-				}
-				const usageStr = formatUsageStats(aggregateUsage(details.results));
-				if (usageStr) text += `\n\n${theme.fg("dim", `Total: ${usageStr}`)}`;
-				text += `\n${theme.fg("muted", "(Ctrl+O to expand)")}`;
-				return new Text(text, 0, 0);
+				return renderChainCards(details.results.map((r, index) => ({
+					agent: r.agent, step: r.step ?? index + 1, task: r.task,
+					status: r.exitCode === -1 ? "running" : isFailedResult(r) ? "failed" : "completed",
+					output: r.finalOutput || getFinalOutput(r.messages),
+					error: r.errorMessage || r.stderr || (r.stopReason === "aborted" ? "任务已中断" : r.stopReason === "error" ? "模型运行错误，未提供具体原因" : undefined),
+					tools: getDisplayItems(r.messages).filter((item): item is Extract<DisplayItem, { type: "toolCall" }> => item.type === "toolCall")
+						.map(item => formatToolCall(item.name, item.args, theme.fg.bind(theme))),
+					usage: formatUsageStats(r.usage, r.model),
+				})), details.plannedSteps ?? details.results.length, formatUsageStats(aggregateUsage(details.results)), expanded, theme, mdTheme);
 			}
 
 			if (details.mode === "parallel") {

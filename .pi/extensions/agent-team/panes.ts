@@ -333,16 +333,21 @@ export function registerPanes(pi: ExtensionAPI) {
     name: 'team', label: 'Agent team', parameters,
     renderCall(input, theme) {
       const labels: Record<string, string> = { status: '查看状态', run: '启动任务', create: '创建团队', spawn: '创建成员', send: '派发任务', broadcast: '广播任务', read: '查看结果', resolve: '验收任务', cancel: '取消任务', stop: '中断成员', close: '关闭成员', recover: '恢复成员', monitor: '设置监控', hide: '隐藏面板' };
-      return new Text(theme.fg('toolTitle', theme.bold(`团队 · ${labels[input.action] ?? '操作'}`)), 0, 0);
+      const background = input.action === 'run' && input.backend === 'background';
+      const title = background ? `🤖 后台子任务 · ${String(input.agent ?? input.name ?? '执行任务').replace(/\s+/g, ' ')}`
+        : `👥 团队 · ${labels[input.action] ?? '操作'}`;
+      return new Text(theme.fg('toolTitle', theme.bold(title)), 0, 0);
     },
     renderResult(result, { expanded, isPartial }, theme) {
       const text = formatTeamResult(result.details, expanded) ?? result.content.filter(c => c.type === 'text').map(c => c.text).join('\n');
+      const background = ['single', 'parallel', 'chain'].includes((result.details as any)?.mode);
       const limit = expanded ? 24000 : 3000;
-      const display = text.length > limit ? text.slice(0, limit) + '\n… 展开或使用 /team task <ID> 查看详情' : text;
-      return new Text(isPartial && !text ? theme.fg('muted', '◌ 正在处理团队操作…') : result.isError ? theme.fg('error', display) : display, 0, 0);
+      const hint = background ? '\n… 展开查看完整子任务结果' : '\n… 展开或使用 /team task <ID> 查看详情';
+      const display = text.length > limit ? text.slice(0, limit) + hint : text;
+      return new Text(isPartial && !text ? theme.fg('muted', background ? '⏳ 后台子任务执行中…' : '◌ 正在处理团队操作…') : result.isError ? theme.fg('error', display) : display, 0, 0);
     },
     reachesTools: (input: any) => input?.action === 'run' && input?.backend === 'background' ? ['subagent'] : [],
-    description: 'Unified dynamic agent delegation. run requires backend background (existing subagent) or pane (persistent interactive Pi). create selects workspace; after all members are closed and tasks resolved/cancelled, create can select a new location in the same lead, preserving history and forcing fresh tabs. Pending/uncertain old layouts require inspection unless their workspaces are confirmed missing. Use new member names; recover never restarts closed members. spawn creates members in dedicated tabs, four panes per tab in TL/TR/BL/BR order, then a new tab. Default members inherit normal Pi extension/MCP discovery and the lead active tools, model and thinking. Roles do not restrict tools. Use readOnly/tools only for an explicitly requested restriction; analysis-only instructions do not require disabling network tools. Optional worktree. Lead auto-approves ordinary permissions; high-risk safety-guard requests require user confirmation in the lead, never in members. send/broadcast queue tasks with dependencies. Batched completion/blocked notices wake lead by default. Review is not success: inspect evidence then resolve id/outcome/summary to release dependents. status gives compact live overview; read with id gives stored task evidence or with name reads member terminal. cancel queued work; stop interrupts, close terminates owned panes (identity checked); recover failed startup. monitor controls polling/dispatch; pause is immediate, not a member stop. hide dismisses the status widget only, without changing monitoring or tasks; safe when no panel is visible. After reload explicitly resume. No high-risk auto-approval or prompt replay. Worktrees retained. Use subagent for short parallel/chain tasks.',
+    description: 'Unified dynamic agent delegation. run requires backend background (existing subagent) or pane (persistent interactive Pi). create selects workspace; after all members are closed and tasks resolved/cancelled, create can select a new location in the same lead, preserving history and forcing fresh tabs. Pending/uncertain old layouts require inspection unless their workspaces are confirmed missing. Use new member names; recover never restarts closed members. spawn creates members in dedicated tabs, four panes per tab in TL/TR/BL/BR order, then a new tab. Default members inherit normal Pi extension/MCP discovery and the lead active tools, model and thinking. Roles do not restrict tools. Use readOnly/tools only for an explicitly requested restriction; analysis-only instructions do not require disabling network tools. Optional worktree. Lead auto-approves ordinary permissions; high-risk safety-guard requests require user confirmation in the lead, never in members. send/broadcast queue tasks with dependencies. Batched completion/blocked notices wake lead by default. Do not wait for members with bash sleep or polling loops: when monitoring is enabled with notify=wake, end the lead turn after dispatch and let result notifications resume coordination. Respect user pauses/aborts. Review is not success: inspect evidence then resolve id/outcome/summary to release dependents. status gives compact live overview; read with id gives stored task evidence or with name reads member terminal. cancel queued work; stop interrupts, close terminates owned panes (identity checked); recover failed startup. monitor controls polling/dispatch; pause is immediate, not a member stop. hide dismisses the status widget only, without changing monitoring or tasks; safe when no panel is visible. After reload explicitly resume. No high-risk auto-approval or prompt replay. Worktrees retained. Use subagent for short parallel/chain tasks.',
     async execute(_id, p, signal, onUpdate, ctx) {
       if (p.action === 'run') {
         if (!p.backend) throw new Error('run requires explicit backend: background or pane');
@@ -381,6 +386,8 @@ export function registerPanes(pi: ExtensionAPI) {
 Lead 职责与工作边界：
 - Lead 负责拆分任务、派发、协调依赖、跟进进度、验收成员结果和最终汇总；主体工作交给成员执行。
 - 已经分配给成员的主体工作，不要自行重复执行，也不要在等待成员期间另做一遍审查、实现或整套测试。
+- 等待成员时，不要执行 bash sleep、长时间阻塞等待或循环查询状态。确保团队监控开启且 notify 为 wake；完成派发、暂时没有协调事项时，简短告知进展后结束当前轮，让插件在成员返回时唤醒 Lead。不要把“本轮等待”说成整个任务已经完成。
+- 收到成员返回通知后，及时读取证据、验收结果并推进后续任务；若用户主动暂停或中断，应尊重该操作，不自行恢复监控。
 - 对成员结论有疑点时，优先要求成员补充证据，或安排另一成员独立交叉核验。
 - Lead 可以做必要的范围确认和小规模证据抽查，但不能用“验收”代替成员完成主体工作，也不能未经核验直接接受成员结论。
 - 如果成员失败、受阻或确有必要由 Lead 接手，应先向用户说明原因和接手范围，再执行；用户另有明确要求时按用户要求处理。

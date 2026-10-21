@@ -26,6 +26,21 @@ test('unified background run uses nested-tool pipeline without Herdr and preserv
   await assert.rejects(tool.execute('x', { ...params, backend: undefined }, undefined, undefined, ctx), /explicit backend/);
 });
 
+test('team renderer distinguishes background subagents from pane teams', () => {
+  let tool;
+  registerPanes({ registerTool(t) { tool = t; }, registerCommand() {}, on() {} });
+  const theme = { fg: (_color, text) => text, bold: text => text };
+  const render = args => tool.renderCall(args, theme).render(120).join('\n');
+  assert.match(render({ action: 'run', backend: 'background', name: 'weight-runtime' }), /🤖 后台子任务 · weight-runtime/);
+  assert.doesNotMatch(render({ action: 'run', backend: 'background', agent: 'reviewer' }), /团队/);
+  assert.match(render({ action: 'run', backend: 'pane', name: 'worker' }), /👥 团队/);
+  assert.match(render({ action: 'status' }), /👥 团队 · 查看状态/);
+  const pending = tool.renderResult({ details: { mode: 'single' }, content: [] }, { expanded: false, isPartial: true }, theme).render(120).join('\n');
+  assert.match(pending, /后台子任务执行中/);
+  const long = tool.renderResult({ details: { mode: 'single' }, content: [{ type: 'text', text: 'x'.repeat(3100) }] }, { expanded: false }, theme).render(120).join('\n');
+  assert.match(long, /展开查看完整子任务结果/); assert.doesNotMatch(long, /\/team task/);
+});
+
 test('dynamic background definitions execute without role files; parallel/chain remain compatible', async t => {
   const { default: register } = await load('../../../../.pi/extensions/agent-team/index');
   const tools = new Map();

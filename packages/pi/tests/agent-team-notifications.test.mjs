@@ -81,6 +81,9 @@ test('team start prompt delegates primary work and limits lead to coordination a
     assert.match(prompt, /主体工作交给成员执行/);
     assert.match(prompt, /不要自行重复执行/);
     assert.match(prompt, /独立交叉核验/);
+    assert.match(prompt, /不要执行 bash sleep/);
+    assert.match(prompt, /结束当前轮/);
+    assert.match(prompt, /不自行恢复监控/);
     assert.match(prompt, /小规模证据抽查/);
     assert.match(prompt, /先向用户说明原因和接手范围/);
     assert.match(prompt, /均使用中文/);
