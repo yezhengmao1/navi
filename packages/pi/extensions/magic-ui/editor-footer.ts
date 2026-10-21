@@ -306,6 +306,9 @@ export interface MagicSelectionCard {
 	/** Pre-rendered searchable content, kept inside the shared card frame. */
 	bodyLines?: string[];
 	warning?: string;
+	/** Optional compact, fixed action area; input remains owned by the caller. */
+	actions?: { label: string; active?: boolean; primary?: boolean }[];
+	compact?: boolean;
 	lines?: string[];
 }
 
@@ -325,7 +328,7 @@ export function renderSelectionCard(card: MagicSelectionCard): string[] {
 	const lines: string[] = [];
 	if (framed) lines.push(border("┌" + "─".repeat(width - 2) + "┐"));
 	lines.push(row(theme.fg("accent", theme.bold(card.title))));
-	if (card.subtitle) lines.push(row(theme.fg("muted", card.subtitle)));
+	if (card.subtitle && !card.compact) lines.push(row(theme.fg("muted", card.subtitle)));
 	if (framed) lines.push(rule());
 	if (card.bodyLines) lines.push(...card.bodyLines.map(line => row(line)));
 	items.forEach((item, index) => {
@@ -340,11 +343,43 @@ export function renderSelectionCard(card: MagicSelectionCard): string[] {
 		const label = theme.fg(active || item.primary ? "accent" : "text", item.label);
 		lines.push(row(marker + checkbox + (item.primary ? theme.bold(label) : label), active));
 	});
-	if (framed) lines.push(rule());
-	if (card.warning) {
-		for (const line of wrapTextWithAnsi(theme.fg("warning", card.warning), bodyWidth)) lines.push(row(line));
+	if (framed) {
+		const label = card.compact && card.subtitle ? truncateToWidth(`─ ${card.subtitle} `, width - 2) : "";
+		lines.push(label ? border("├" + label + "─".repeat(Math.max(0, width - 2 - visibleWidth(label))) + "┤") : rule());
 	}
-	for (const hint of card.hints) {
+	if (card.warning) {
+		const warningLines = wrapTextWithAnsi(theme.fg("warning", card.warning), bodyWidth);
+		const shown = card.compact ? warningLines.slice(0, 2) : warningLines;
+		for (const [index, line] of shown.entries()) lines.push(row(index === shown.length - 1 && shown.length < warningLines.length ? truncateToWidth(line, Math.max(0, bodyWidth - 1)) + "…" : line));
+	}
+	const compactHint = (available: number) => {
+		const hint = card.hints.find(text => visibleWidth(text) <= available) ?? card.hints.at(-1) ?? "";
+		return available > 0 ? truncateToWidth(hint, available, "…") : "";
+	};
+	if (card.actions?.length) {
+		const actions = card.actions.map(action => {
+			const text = `${action.active ? "›" : " "} ${action.label}`;
+			return theme.fg(action.active ? "accent" : "text", action.active ? theme.bold(text) : text);
+		});
+		let joined = actions.join("    ");
+		if (card.compact) {
+			// Reserve buttons first; hints only use the remaining columns on the right.
+			if (visibleWidth(joined) > bodyWidth) joined = actions.join(" ");
+			const actionLines = visibleWidth(joined) <= bodyWidth ? [joined] : actions;
+			for (const [index, action] of actionLines.entries()) {
+				const hint = index === actionLines.length - 1 ? compactHint(bodyWidth - visibleWidth(action) - 2) : "";
+				const padding = hint ? " ".repeat(bodyWidth - visibleWidth(action) - visibleWidth(hint)) : "";
+				lines.push(row(action + padding + theme.fg("muted", hint)));
+			}
+		} else if (visibleWidth(joined) <= bodyWidth) lines.push(row(joined));
+		else for (const action of actions) lines.push(row(action));
+	}
+	if (card.compact) {
+		if (!card.actions?.length) {
+			const hint = compactHint(bodyWidth);
+			if (hint) lines.push(row(theme.fg("muted", hint)));
+		}
+	} else for (const hint of card.hints) {
 		for (const line of wrapTextWithAnsi(theme.fg("muted", hint), bodyWidth)) lines.push(row(line));
 	}
 	if (framed) lines.push(border("└" + "─".repeat(width - 2) + "┘"));
@@ -450,6 +485,8 @@ export default function (pi: ExtensionAPI) {
 		if (ctx.mode !== "tui") return;
 		class MagicEditor extends CustomEditor {
 			private renderedContentHeight = 0;
+			private sessionCompletionCard = false;
+			private completionBodyRows = 0;
 
 			setAutocompleteProvider(provider: AutocompleteProvider) {
 				const event = { ctx, provider };
@@ -475,6 +512,7 @@ export default function (pi: ExtensionAPI) {
 
 			render(width: number): string[] {
 				this.renderedContentHeight = 0;
+				this.sessionCompletionCard = false;
 				if (width < 6) return super.render(width);
 
 				// Keep one blank gutter on each side, without vertical borders.
@@ -528,9 +566,18 @@ export default function (pi: ExtensionAPI) {
 				const background = staticMessageBackground(theme);
 				const pad = (line: string) => paintStaticMessage(
 					" " + truncateToWidth(line, innerWidth, "", true) + " ", background);
-				const autocomplete = lines
-					.slice(bottomIndex + 1)
-					.map((line) => " " + truncateToWidth(line, innerWidth, "", true) + " ");
+				const completionLines = lines.slice(bottomIndex + 1);
+				const { line, col } = this.getCursor();
+				this.sessionCompletionCard = width >= 24 && completionLines.length > 0 &&
+					/(?:^|\s)\$[^\s$]*$/.test((this.getText().split("\n")[line] ?? "").slice(0, col));
+				this.completionBodyRows = completionLines.length;
+				const autocomplete = this.sessionCompletionCard
+					? renderSelectionCard({
+						width, theme, title: "引用其他会话", compact: true,
+						items: [], cursor: -1, bodyLines: completionLines,
+						hints: ["↑↓ 选择 · Enter 插入引用 · Esc 取消", "↑↓ 选择 · Enter 确认"],
+					})
+					: completionLines.map((line) => " " + truncateToWidth(line, innerWidth, "", true) + " ");
 
 				this.renderedContentHeight = contentLines.length;
 				return ["", pad(""), ...contentLines.map(line => pad(line)),
@@ -541,6 +588,12 @@ export default function (pi: ExtensionAPI) {
 				if (!this.renderedContentHeight) return super.handleMouse(event);
 				const bottomGap = this.renderedContentHeight + 3;
 				if (event.y === 0 || event.y === bottomGap) return undefined;
+				if (this.sessionCompletionCard && event.y > bottomGap) {
+					const bodyStart = bottomGap + 5;
+					if (event.y < bodyStart || event.y >= bodyStart + this.completionBodyRows) return undefined;
+					return super.handleMouse({ ...event, y: event.y - 5,
+						x: Math.max(0, event.x - 2), width: Math.max(1, event.width - 4) });
+				}
 				return super.handleMouse({
 					...event,
 					// Remove exterior spacing from native editor/completion coordinates.

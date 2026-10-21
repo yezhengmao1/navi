@@ -46,7 +46,7 @@ test('real MagicEditor opens dollar candidates and Escape cancels without changi
     description: identity, scrollInfo: identity, noMatch: identity } };
   let editor;
   const ctx = { mode: 'tui', hasUI: true, ui: {
-    theme: { fg: (_, text) => text, style: text => text,
+    theme: { fg: (_, text) => text, bg: (_, text) => text, bold: text => text, style: text => text,
       colors: { userMessageBg: tui.rgbColor(0, 0, 0), accent: tui.rgbColor(255, 255, 255), warning: tui.rgbColor(255, 255, 0) } },
     setEditorComponent(factory) { editor = factory({ requestRender() {}, terminal: { rows: 40 } }, theme, { matches: () => false }); },
     setFooter() {}, setWorkingMessage() {},
@@ -62,7 +62,11 @@ test('real MagicEditor opens dollar candidates and Escape cancels without changi
   editor.handleInput('$');
   await new Promise(resolve => setTimeout(resolve, 150));
   assert.equal(editor.isShowingAutocomplete(), true);
-  assert.match(editor.render(80).join('\n'), /候选会话/);
+  const rendered = editor.render(80).join('\n');
+  assert.match(rendered, /候选会话/);
+  assert.match(rendered, /引用其他会话/);
+  assert.match(rendered, /┌─/);
+  assert.match(rendered, /Enter 插入引用/);
   assert.equal(editor.getText(), '$', 'one match must not be auto-inserted');
   editor.handleInput('\x1b');
   assert.equal(editor.isShowingAutocomplete(), false);

@@ -1,5 +1,5 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Key, matchesKey } from "@earendil-works/pi-tui";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Key, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
 import { renderSelectionCard } from "./editor-footer.js";
 import { Type } from "typebox";
 
@@ -71,15 +71,23 @@ export default function (pi: ExtensionAPI) {
       submitLabel: Type.Optional(Type.String({ minLength: 1, description: "提交按钮文字，默认确认提交" })),
     }),
     async execute(_id, params, signal, _onUpdate, ctx) {
-      const cancelled = (reason: string): Result => ({ cancelled: true, answers: {}, reason });
       const result = (value: Result) => ({
         content: [{ type: "text" as const, text: JSON.stringify(value) }], details: value,
       });
-      validateQuestions(params.questions);
-      if (ctx.mode !== "tui") return result(cancelled("UI 不可用；请在交互式终端运行或由用户明确提供文字答案"));
-      if (signal?.aborted) return result(cancelled("操作已中止"));
+      return result(await showQuestionnaire(pi, ctx, params, signal));
+    },
+  });
+}
 
-      return result(await ctx.ui.custom<Result>((tui, theme, _kb, done) => {
+/** Shared command/tool UI; commands may supply up to 64 registered sources. */
+export async function showQuestionnaire(pi: ExtensionAPI, ctx: ExtensionContext,
+  params: { title: string; questions: QuestionSpec[]; submitLabel?: string }, signal?: AbortSignal): Promise<Result> {
+      const cancelled = (reason: string): Result => ({ cancelled: true, answers: {}, reason });
+      validateQuestions(params.questions);
+      if (ctx.mode !== "tui") return cancelled("UI 不可用；请在交互式终端运行或由用户明确提供文字答案");
+      if (signal?.aborted) return cancelled("操作已中止");
+
+      return await ctx.ui.custom<Result>((tui, theme, _kb, done) => {
         const questions = params.questions;
         const answers = new Map<string, Answer>();
         const rows: { question: number; option?: string; label: string; group?: string }[] = [];
@@ -96,7 +104,7 @@ export default function (pi: ExtensionAPI) {
           }
         }
         const submitIndex = rows.length, cancelIndex = submitIndex + 1;
-        let cursor = 0, warning = "", finished = false;
+        let cursor = 0, warning = "", finished = false, usable = true;
         const finish = (value: Result) => {
           if (finished) return;
           finished = true;
@@ -133,34 +141,53 @@ export default function (pi: ExtensionAPI) {
         };
         return {
           render(width) {
+            const height = Math.max(1, Math.min(28, (tui.terminal?.rows ?? 24) - 4));
+            usable = width >= 24 && height >= 10;
+            if (!usable) return width > 0 ? [truncateToWidth("窗口过小，请放大；Esc 取消", width)] : [];
             const items = rows.map(row => {
               const q = questions[row.question], value = answers.get(q.id);
               const checked = q.type === "confirm" ? value === true
                 : q.type === "single" ? value === row.option : (value as string[]).includes(row.option!);
               return { label: row.label, group: row.group, checked };
             });
-            const allItems = [...items,
-              { label: params.submitLabel ?? "确认提交", group: "操作", primary: true },
-              { label: "取消" },
-            ];
-            // Bounded viewport; move the question heading into the first visible row.
-            const start = Math.max(0, Math.min(cursor - 7, allItems.length - 10));
-            const visible = allItems.slice(start, start + 10).map(item => ({ ...item }));
-            if (start > 0 && rows[start] && !visible[0].group) visible[0].group = questions[rows[start].question].prompt;
-            const hints = ["↑↓/Tab 移动 · 空格选择 · a 全选/清空当前多选题", "Enter 提交（取消行除外）· Esc 取消"];
-            const card = {
-              width, theme, title: params.title,
-              subtitle: `${questions.length} 个问题 · ${start + 1}–${Math.min(start + 10, allItems.length)}/${allItems.length} 行`,
-              cursor: cursor - start, items: visible, hints, warning,
-              lines: undefined as string[] | undefined,
-            };
-            pi.events.emit("magic-ui:selection-card", card);
-            return card.lines ?? renderSelectionCard(card);
+            // Measure actual group/warning rows; actions never scroll with options.
+            const focus = Math.min(cursor, rows.length - 1);
+            for (let count = Math.min(12, items.length); count >= 1; count--) {
+              const start = Math.max(0, Math.min(focus - Math.floor(count / 2), items.length - count));
+              const visible = items.slice(start, start + count).map(item => ({ ...item }));
+              if (start > 0 && !visible[0].group) visible[0].group = questions[rows[start].question].prompt;
+              const q = rows[cursor] && questions[rows[cursor].question];
+              const actionHint = cursor === cancelIndex ? '取消' : '提交';
+              const hints = [
+                `↑↓/Tab 移动 · 空格选择${q?.type === 'multiple' ? ' · a 全选/清空' : ''} · Enter ${actionHint} · Esc 取消`,
+                `↑↓ 移动 · 空格选择 · Enter ${actionHint}`, `↑↓ / 空格 · ↵ ${actionHint}`,
+              ];
+              const card = {
+                width, theme, title: params.title, compact: true,
+                subtitle: `${start + 1}–${start + visible.length} / ${items.length} · ${questions.length} 题`,
+                cursor: cursor < rows.length ? cursor - start : -1, items: visible, hints, warning,
+                actions: [
+                  { label: params.submitLabel ?? '确认提交', active: cursor === submitIndex, primary: true },
+                  { label: '取消', active: cursor === cancelIndex },
+                ],
+                lines: undefined as string[] | undefined,
+              };
+              const rendered = renderSelectionCard(card);
+              if (rendered.length > height && count > 1) continue;
+              if (rendered.length > height) {
+                usable = false;
+                return [truncateToWidth('窗口过小，请放大；Esc 取消', width)];
+              }
+              pi.events.emit('magic-ui:selection-card', card);
+              return card.lines ?? rendered;
+            }
+            return [];
           },
           invalidate() {},
           handleInput(data) {
             if (finished) return;
             if (matchesKey(data, Key.escape)) { finish(cancelled("用户取消")); return; }
+            if (!usable) return;
             warning = "";
             if (matchesKey(data, Key.up) || matchesKey(data, Key.shift("tab"))) cursor = (cursor + cancelIndex) % (cancelIndex + 1);
             else if (matchesKey(data, Key.down) || matchesKey(data, Key.tab)) cursor = (cursor + 1) % (cancelIndex + 1);
@@ -178,7 +205,5 @@ export default function (pi: ExtensionAPI) {
           },
           dispose() { signal?.removeEventListener("abort", abort); },
         };
-      }));
-    },
-  });
+      });
 }

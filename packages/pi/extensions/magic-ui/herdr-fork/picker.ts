@@ -2,7 +2,7 @@ import { matchesKey } from '@earendil-works/pi-tui';
 import { renderSelectionCard } from '../editor-footer.js';
 
 /** Keyboard-only session card. Navigation never creates a pane until Enter. */
-export function createSessionPicker(tui: any, theme: any, done: (value?: string) => void, labels: string[], options: { title?: string; scope?: string; enterHint?: string } = {}) {
+export function createSessionPicker(tui: any, theme: any, done: (value?: string) => void, labels: string[], options: { title?: string; scope?: string; enterHint?: string; itemNoun?: string } = {}) {
   let cursor = 0;
   let finished = false;
   const finish = (value?: string) => {
@@ -16,13 +16,13 @@ export function createSessionPicker(tui: any, theme: any, done: (value?: string)
       const height = Math.max(1, Math.min(8, (tui.terminal.rows || 24) - 10));
       const start = Math.max(0, Math.min(cursor - Math.floor(height / 2), labels.length - height));
       return ['', ...renderSelectionCard({
-        width, theme,
+        width, theme, compact: true,
         title: options.title ?? '复制会话到新分屏',
-        subtitle: `${options.scope ?? '当前项目'} · ${labels.length} 个会话 · ${labels.length ? cursor + 1 : 0}/${labels.length}`,
+        subtitle: `${options.scope ?? '当前项目'} · ${labels.length} 个${options.itemNoun ?? '会话'} · ${labels.length ? cursor + 1 : 0}/${labels.length}`,
         items: labels.slice(start, start + height).map(label => ({ label })),
         cursor: cursor - start,
         warning: labels.length ? undefined : '没有可选择的会话',
-        hints: ['←/→ 跳过 10 个 · ↑↓ 选择', options.enterHint ?? 'Enter 创建分屏 · Esc 取消'],
+        hints: [`↑↓ 选择 · ${options.enterHint ?? 'Enter 创建分屏 · Esc 取消'}`, options.enterHint ?? 'Enter 创建分屏 · Esc 取消'],
       })];
     },
     handleInput(data: string) {
