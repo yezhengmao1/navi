@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { load } from './helpers.mjs';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 const { Scheduler, registerScheduler } = await load('../../../../.pi/extensions/agent-team/scheduler');
@@ -78,6 +78,85 @@ test('project confirmation, background delivery and session cleanup', async t =>
  assert.equal(executions, 1);
  const result = await tool.execute('', {action: 'list'}, undefined, undefined, ctx);
  assert.equal(result.content[0].text, '[]');
+});
+
+test('dynamic schedule works without role files and captures its definition for every run', async t => {
+ t.mock.timers.enable({apis: ['setTimeout', 'Date']});
+ const cwd = mkdtempSync(join(tmpdir(), 'pi-schedule-inline-'));
+ t.after(() => rmSync(cwd, {recursive: true, force: true}));
+ const hooks = new Map(), executions = [], messages = []; let tool;
+ registerScheduler({registerTool: value => tool = value, registerCommand() {}, on: (name, fn) => hooks.set(name, fn),
+  sendMessage: (...args) => messages.push(args)}, async (agent, task, ctx) => {
+   executions.push(structuredClone({agent, task, ctx})); return 'checked';
+  });
+ t.after(() => hooks.get('session_shutdown')());
+ const definition = {name: 'job-check', instructions: 'Read logs only; do not modify jobs.', model: 'provider/reviewer', tools: ['read', 'bash']};
+ const ctx = {cwd, mode: 'tui', hasUI: true, isProjectTrusted: () => false, thinkingLevel: 'high', model: {provider: 'lead', id: 'original'},
+  ui: {confirm() { assert.fail('explicit inline instructions are not a saved project role'); }}};
+ const created = await tool.execute('', {action: 'create', agent: definition.name, definitions: [definition], agentScope: 'project',
+  task: 'Check these logs; report progress, no changes.', intervalSeconds: 180, maxRuns: 2, timeoutSeconds: 150}, undefined, undefined, ctx);
+ assert.ok(JSON.parse(created.content[0].text).id);
+ assert.deepEqual(readdirSync(cwd), [], 'no role/config file is created');
+ definition.instructions = 'mutated'; definition.tools.push('write'); definition.model = 'other/model';
+ ctx.cwd = '/changed'; ctx.thinkingLevel = 'low'; ctx.model = {provider: 'other', id: 'changed'};
+ t.mock.timers.tick(179999); assert.equal(executions.length, 0);
+ t.mock.timers.tick(1); await flush(); assert.equal(executions.length, 1);
+ t.mock.timers.tick(180000); await flush(); assert.equal(executions.length, 2);
+ for (const execution of executions) {
+  assert.equal(execution.agent.systemPrompt, 'Read logs only; do not modify jobs.');
+  assert.deepEqual(execution.agent.tools, ['read', 'bash']); assert.equal(execution.agent.model, 'provider/reviewer');
+  assert.equal(execution.agent.filePath, '<inline-definition>');
+  assert.equal(execution.ctx.cwd, cwd); assert.equal(execution.ctx.thinkingLevel, 'high');
+  assert.equal(execution.ctx.model.id, 'original');
+ }
+ assert.equal(messages.length, 2); assert.ok(messages.every(([, options]) => options.triggerTurn === false));
+ assert.equal(JSON.parse((await tool.execute('', {action: 'list'}, undefined, undefined, ctx)).content[0].text)[0].state, 'completed');
+});
+
+test('dynamic schedule rejects missing/mismatched/invalid roles before arming timers', async t => {
+ t.mock.timers.enable({apis: ['setTimeout']});
+ const cwd = mkdtempSync(join(tmpdir(), 'pi-schedule-invalid-'));
+ t.after(() => rmSync(cwd, {recursive: true, force: true}));
+ const hooks = new Map(); let tool;
+ registerScheduler({registerTool: value => tool = value, registerCommand() {}, on: (name, fn) => hooks.set(name, fn)}, async () => assert.fail('invalid schedule must never run'));
+ t.after(() => hooks.get('session_shutdown')());
+ const ctx = {cwd, mode: 'tui'};
+ const params = {action: 'create', agent: 'job-check', agentScope: 'project', task: 'check', intervalSeconds: 180};
+ const invoke = extra => tool.execute('', {...params, ...extra}, undefined, undefined, ctx);
+ await assert.rejects(invoke({}), /Available: none.*Supply definitions/);
+ await assert.rejects(invoke({agent: undefined}), /agent, task and intervalSeconds required/);
+ const valid = {name: 'job-check', instructions: 'Check only'};
+ await assert.rejects(invoke({definitions: [{...valid, name: 'other'}]}), /Unknown agent.*Supply definitions/);
+ await assert.rejects(invoke({definitions: [valid, valid]}), /unique valid names/);
+ await assert.rejects(invoke({definitions: [{...valid, name: '../bad'}]}), /unique valid names/);
+ await assert.rejects(invoke({definitions: [{...valid, instructions: '  '}]}), /nonempty instructions/);
+ await assert.rejects(invoke({definitions: [{...valid, tools: [123]}]}), /array of strings/);
+ await assert.rejects(invoke({definitions: Array.from({length: 9}, (_, i) => ({...valid, name: `agent-${i}`}))}), /At most 8/);
+ t.mock.timers.tick(180000); await flush();
+ assert.equal((await tool.execute('', {action: 'list'}, undefined, undefined, ctx)).content[0].text, '[]');
+});
+
+test('dynamic definitions override saved roles without modifying them; cancellation and reload clear schedules', async t => {
+ t.mock.timers.enable({apis: ['setTimeout']});
+ const cwd = mkdtempSync(join(tmpdir(), 'pi-schedule-override-'));
+ t.after(() => rmSync(cwd, {recursive: true, force: true}));
+ mkdirSync(join(cwd, '.pi/agents'), {recursive: true});
+ writeFileSync(join(cwd, '.pi/agents/check.md'), '---\nname: check\ndescription: test\n---\nSaved role.');
+ const hooks = new Map(), executions = []; let tool;
+ registerScheduler({registerTool: value => tool = value, registerCommand() {}, on: (name, fn) => hooks.set(name, fn), sendMessage() {}},
+  async agent => { executions.push(agent.systemPrompt); return 'ok'; });
+ t.after(() => hooks.get('session_shutdown')());
+ const ctx = {cwd, mode: 'tui', isProjectTrusted: () => true};
+ const base = {action: 'create', agent: 'check', agentScope: 'project', task: 'check', intervalSeconds: 1, maxRuns: 1};
+ const invoke = params => tool.execute('', params, undefined, undefined, ctx);
+ const inline = {...base, definitions: [{name: 'check', instructions: 'Inline role.'}]};
+ await invoke(inline); await invoke(base);
+ t.mock.timers.tick(1000); await flush(); assert.deepEqual(executions.sort(), ['Inline role.', 'Saved role.']);
+ const cancelled = JSON.parse((await invoke(inline)).content[0].text);
+ await invoke({action: 'cancel', id: cancelled.id});
+ await invoke(inline); hooks.get('session_shutdown')();
+ t.mock.timers.tick(10000); await flush(); assert.equal(executions.length, 2);
+ assert.equal((await invoke({action: 'list'})).content[0].text, '[]');
 });
 
 test('shared concurrency is FIFO; queued cancellation does not consume a run', async t => {

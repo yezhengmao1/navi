@@ -56,13 +56,13 @@ const labels = { running: '⏳ 执行中', failed: '❌ 失败', completed: '✅
 const plain = (text: string) => stripVTControlCharacters(text);
 const singleLine = (text: string) => plain(text).replace(/\s+/g, ' ').trim();
 
-export function renderChainCards(cards: ChainCard[], total: number, _usage: string, expanded: boolean, theme: any, markdownTheme: any, mode: 'chain' | 'parallel' = 'chain') {
+export function renderChainCards(cards: ChainCard[], total: number, _usage: string, expanded: boolean, theme: any, markdownTheme: any, mode: 'single' | 'chain' | 'parallel' = 'chain') {
   const view = new Container();
   // Overall progress and usage belong exclusively to the tool-call heading.
   for (const card of cards) {
     const body = new Container();
     const color = card.status === 'failed' ? 'error' : card.status === 'running' ? 'accent' : 'success';
-    body.addChild(new Text(theme.fg(color, `${labels[card.status]} · ${mode === 'chain' ? '步骤' : '任务'} ${card.step} · ${singleLine(card.agent)}${card.usage ? ` · ${card.usage}` : ''}`), 0, 0));
+    body.addChild(new Text(theme.fg(color, `${labels[card.status]} · ${mode === 'single' ? '' : `${mode === 'chain' ? '步骤' : '任务'} ${card.step} · `}${singleLine(card.agent)}${card.usage ? ` · ${card.usage}` : ''}`), 0, 0));
     if (expanded) {
       body.addChild(new Text(theme.fg('muted', '🎯 任务'), 0, 0));
       body.addChild(new Text(plain(card.task), 0, 0));

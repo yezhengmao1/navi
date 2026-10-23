@@ -26,8 +26,9 @@ import {
 	getMarkdownTheme,
 	withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
-import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
+import { Text } from "@earendil-works/pi-tui";
 import { renderChainCards, formatSubagentUsage, subagentCallHeader, updateSubagentHeaderUsage } from "./chain-display.ts";
+import { AgentDefinitionsSchema, withAgentDefinitions } from "./agent-definitions.ts";
 import { Type } from "typebox";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.ts";
 import { SubagentStatus } from "./status.ts";
@@ -37,7 +38,6 @@ import { appendTail, BoundedLines, boundedText, finalAssistantText } from "./out
 
 const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
-const COLLAPSED_ITEM_COUNT = 10;
 const PER_TASK_OUTPUT_CAP = 50 * 1024;
 
 function formatUsageStats(
@@ -470,12 +470,7 @@ const AgentScopeSchema = StringEnum(["user", "project", "both"] as const, {
 });
 
 const SubagentParams = Type.Object({
-	definitions: Type.Optional(Type.Array(Type.Object({
-		name: Type.String({ description: "Dynamic agent name used by agent/tasks/chain" }),
-		instructions: Type.String({ description: "Task-specific role instructions; no saved role file needed" }),
-		model: Type.Optional(Type.String()),
-		tools: Type.Optional(Type.Array(Type.String())),
-	}), { maxItems: 8, description: "Ephemeral agent definitions for this call; override same-name saved roles. Not persisted." })),
+	definitions: Type.Optional(AgentDefinitionsSchema),
 	agent: Type.Optional(Type.String({ description: "Name of the agent to invoke (for single mode)" })),
 	task: Type.Optional(Type.String({ description: "Task to delegate (for single mode)" })),
 	tasks: Type.Optional(Type.Array(TaskItem, { description: "Array of {agent, task} for parallel execution" })),
@@ -525,17 +520,7 @@ export default function (pi: ExtensionAPI) {
 				thinkingLevel: ctx.thinkingLevel,
 			};
 			const discovery = discoverAgents(ctx.cwd, agentScope);
-			const agents = [...discovery.agents];
-			const names = new Set<string>();
-			for (const definition of params.definitions ?? []) {
-				if (!/^[a-z][a-z0-9_-]{0,31}$/.test(definition.name) || !definition.instructions.trim() || names.has(definition.name))
-					throw new Error("Dynamic definitions require unique valid names and nonempty instructions");
-				names.add(definition.name);
-				const existing = agents.findIndex(a => a.name === definition.name);
-				if (existing >= 0) agents.splice(existing, 1);
-				agents.push({ name: definition.name, description: "Dynamic task-specific agent", systemPrompt: definition.instructions,
-					model: definition.model, tools: definition.tools, source: "user", filePath: "<inline-definition>" });
-			}
+			const agents = withAgentDefinitions(discovery.agents, params.definitions);
 			const confirmProjectAgents = params.confirmProjectAgents ?? true;
 
 			const hasChain = (params.chain?.length ?? 0) > 0;
@@ -814,74 +799,7 @@ export default function (pi: ExtensionAPI) {
 
 			const mdTheme = getMarkdownTheme();
 
-			const renderDisplayItems = (items: DisplayItem[], limit?: number) => {
-				const toShow = limit ? items.slice(-limit) : items;
-				const skipped = limit && items.length > limit ? items.length - limit : 0;
-				let text = "";
-				if (skipped > 0) text += theme.fg("muted", `... ${skipped} earlier items\n`);
-				for (const item of toShow) {
-					if (item.type === "text") {
-						const preview = expanded ? item.text : item.text.split("\n").slice(0, 3).join("\n");
-						text += `${theme.fg("toolOutput", preview)}\n`;
-					} else {
-						text += `${theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg.bind(theme))}\n`;
-					}
-				}
-				return text.trimEnd();
-			};
-
-			if (details.mode === "single" && details.results.length === 1) {
-				const r = details.results[0];
-				const isError = isFailedResult(r);
-				const icon = isError ? theme.fg("error", "✗") : theme.fg("success", "✓");
-				const displayItems = getDisplayItems(r.messages);
-				const finalOutput = getFinalOutput(r.messages);
-
-				if (expanded) {
-					const container = new Container();
-					let header = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${theme.fg("muted", ` (${r.agentSource})`)}`;
-					if (isError && r.stopReason) header += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
-					container.addChild(new Text(header, 0, 0));
-					if (isError && r.errorMessage)
-						container.addChild(new Text(theme.fg("error", `Error: ${r.errorMessage}`), 0, 0));
-					container.addChild(new Spacer(1));
-					container.addChild(new Text(theme.fg("muted", "─── Task ───"), 0, 0));
-					container.addChild(new Text(theme.fg("dim", r.task), 0, 0));
-					container.addChild(new Spacer(1));
-					container.addChild(new Text(theme.fg("muted", "─── Output ───"), 0, 0));
-					if (displayItems.length === 0 && !finalOutput) {
-						container.addChild(new Text(theme.fg("muted", "(no output)"), 0, 0));
-					} else {
-						for (const item of displayItems) {
-							if (item.type === "toolCall")
-								container.addChild(
-									new Text(
-										theme.fg("muted", "→ ") + formatToolCall(item.name, item.args, theme.fg.bind(theme)),
-										0,
-										0,
-									),
-								);
-						}
-						if (finalOutput) {
-							container.addChild(new Spacer(1));
-							container.addChild(new Markdown(finalOutput.trim(), 0, 0, mdTheme));
-						}
-					}
-					return container;
-				}
-
-				let text = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${theme.fg("muted", ` (${r.agentSource})`)}`;
-				if (isError && r.stopReason) text += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
-				if (isError && r.errorMessage) text += `\n${theme.fg("error", `Error: ${r.errorMessage}`)}`;
-				else if (displayItems.length === 0) text += `\n${theme.fg("muted", "(no output)")}`;
-				else {
-					text += `\n${renderDisplayItems(displayItems, COLLAPSED_ITEM_COUNT)}`;
-					if (displayItems.length > COLLAPSED_ITEM_COUNT) text += `\n${theme.fg("muted", "(Ctrl+O to expand)")}`;
-				}
-				return new Text(text, 0, 0);
-			}
-
-			if (details.mode === "chain" || details.mode === "parallel") {
+			if (details.mode === "single" || details.mode === "chain" || details.mode === "parallel") {
 				return renderChainCards(details.results.map((r, index) => ({
 					agent: r.agent, step: r.step ?? index + 1, task: r.task,
 					status: r.exitCode === -1 ? "running" : isFailedResult(r) ? "failed" : "completed",
