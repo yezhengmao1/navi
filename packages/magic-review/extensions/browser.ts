@@ -90,7 +90,7 @@ export async function browseReview(ctx: ExtensionContext, run: ReviewRun): Promi
     let decision = 0;
     let priority = 0, status = 0, selected = 0, offset = 0;
     let detail = false, finished = false;
-    const pageSize = 10;
+    let pageSize = 10;
     let detailLength = 0;
     const filtered = () => (run.findings ?? []).filter(f =>
       (decisions[decision] === 'all' || (f.verificationDecision ?? 'confirmed') === decisions[decision]) &&
@@ -104,7 +104,17 @@ export async function browseReview(ctx: ExtensionContext, run: ReviewRun): Promi
       render(width: number) {
         if (width < 1) return [];
         const activeTheme = ctx.ui.theme ?? theme;
-        const fit = (text: string) => truncateToWidth(text, width, '');
+        const framed = width >= 6;
+        const inner = framed ? width - 4 : width;
+        const fit = (text: string) => truncateToWidth(text, inner, '');
+        const border = (text: string) => activeTheme.fg('border', text);
+        const rule = () => border(`├${'─'.repeat(width - 2)}┤`);
+        const row = (text: string) => {
+          const body = fit(text);
+          return framed ? border('│ ') + body + ' '.repeat(Math.max(0, inner - visibleWidth(body))) + border(' │') : body;
+        };
+        // Keep the summary and keyboard hints visible on shorter terminals.
+        pageSize = Math.max(1, Math.min(10, (tui.terminal?.rows ?? 28) - 18));
         const findings = filtered();
         selected = Math.max(0, Math.min(selected, findings.length - 1));
         const finding = findings[selected];
@@ -117,7 +127,7 @@ export async function browseReview(ctx: ExtensionContext, run: ReviewRun): Promi
             ['触发条件/主张', finding.triggerOrClaim ?? finding.trigger], ['后果', finding.consequence],
             ['置信依据', finding.confidenceBasis], ['验证', finding.verification], ['独立复核', finding.verificationDecision], ['复核理由', finding.verdict?.reason], ['复核证据', finding.verdict?.evidence], ['建议', finding.suggestion],
           ];
-          const body = fields.flatMap(([label, value]) => wrapTextWithAnsi(`${label}: ${clean(value)}`, width));
+          const body = fields.flatMap(([label, value]) => wrapTextWithAnsi(`${label}: ${clean(value)}`, inner));
           detailLength = body.length;
           offset = Math.min(offset, Math.max(0, body.length - pageSize));
           lines.push(...body.slice(offset, offset + pageSize).map(fit));
@@ -126,7 +136,9 @@ export async function browseReview(ctx: ExtensionContext, run: ReviewRun): Promi
           const start = Math.max(0, selected - pageSize + 1);
           lines.push(...findings.slice(start, start + pageSize).map((f, i) => {
             const text = fit(`${start + i === selected ? '›' : ' '} [${clean(f.priority)}][${clean(f.status ?? 'open')}] ${clean(f.title)}`);
-            return start + i === selected ? activeTheme.fg('accent', text) : text;
+            return start + i === selected
+              ? activeTheme.bg('selectedBg', activeTheme.fg('accent', text) + ' '.repeat(Math.max(0, inner - visibleWidth(text))))
+              : text;
           }));
           if (!findings.length) lines.push(fit('没有匹配的发现'));
         }
@@ -134,8 +146,13 @@ export async function browseReview(ctx: ExtensionContext, run: ReviewRun): Promi
           'p 优先级 · s 状态 · c 复核结论筛选',
           ...(finding ? ['a 接受 · d 忽略 · r 解决 · o 重开', 'v 复查 · q 讨论'] : []),
           'x 取消运行 · u 恢复运行'];
-        lines.push(...help.map(line => activeTheme.fg('dim', fit(line))));
-        return lines;
+        const body = lines.map(row);
+        const footer = help.map(line => row(activeTheme.fg('muted', fit(line))));
+        if (!framed) return [...body, ...footer];
+        // Match questionnaire's solid selection card: summary, body, fixed hints.
+        return [border(`┌${'─'.repeat(width - 2)}┐`),
+          ...body.slice(0, 3), rule(), ...body.slice(3), rule(), ...footer,
+          border(`└${'─'.repeat(width - 2)}┘`)];
       },
       handleInput(data: string) {
         if (finished) return;

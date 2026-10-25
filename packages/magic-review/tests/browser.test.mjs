@@ -9,7 +9,7 @@ const mock = `
 const Key = { escape: 'escape', up: 'up', down: 'down', enter: 'enter' };
 const matchesKey = (data, key) => data === key;
 const visibleWidth = text => [...text].reduce((n, c) => n + columns(c), 0);
-const columns = c => /[^\\x00-\\x7f]/u.test(c) ? 2 : 1;
+const columns = c => /[\\u2500-\\u257f]/u.test(c) ? 1 : /[^\\x00-\\x7f]/u.test(c) ? 2 : 1;
 const truncateToWidth = (text, width) => { let out = ''; for (const c of text) { width -= columns(c); if (width < 0) break; out += c; } return out; };
 const wrapTextWithAnsi = (text, width) => { const rows = []; let row = '', used = 0; for (const c of text) { const n = columns(c); if (used + n > width) { rows.push(row); row = ''; used = 0; } row += c; used += n; } rows.push(row); return rows; };
 `;
@@ -20,12 +20,12 @@ const run = { state: 'completed', stage: 'review', calls: 2, budget: { maxCalls:
     id: String(i), title: `发现${i}\x1b[31m\n`, priority: i % 2 ? 'optional' : 'must-fix', status: 'open',
     evidence: '证据'.repeat(100), triggerOrClaim: '触发', consequence: '后果', verification: '验证', suggestion: '建议',
   })) };
-function harness() {
+function harness(review = run) {
   let component, done;
-  const ctx = { mode: 'tui', ui: { theme: { fg: (_, text) => text }, custom(factory) {
+  const ctx = { mode: 'tui', ui: { theme: { fg: (_, text) => text, bg: (_, text) => text }, custom(factory) {
     return new Promise(resolve => { done = resolve; component = factory({ requestRender() {} }, this.theme, {}, resolve); });
   } } };
-  const result = browseReview(ctx, run);
+  const result = browseReview(ctx, review);
   return { ctx, result, get component() { return component; }, close() { done(undefined); } };
 }
 test('review status uses compact subagent labels and render-time colors', () => {
@@ -50,6 +50,17 @@ test('review status uses compact subagent labels and render-time colors', () => 
   assert.match(widget.render(80)[0], /┌╌/);
 });
 
+test('empty review uses questionnaire-style solid frame and separated hints', async () => {
+  const h = harness({ ...run, findings: [] });
+  const lines = h.component.render(80);
+  assert.match(lines[0], /^┌─+┐$/);
+  assert.match(lines.at(-1), /^└─+┘$/);
+  assert.equal(lines.filter(line => /^├─+┤$/.test(line)).length, 2);
+  assert.ok(lines.some(line => line.includes('没有匹配的发现')));
+  assert.ok(lines.some(line => line.includes('esc 退出')));
+  h.close(); await h.result;
+});
+
 test('non-TUI is notification/noop, never calls custom', async () => {
   assert.equal(await browseReview({ mode: 'json' }, run), undefined);
   let notice;
@@ -62,16 +73,16 @@ test('bounded, width-safe, sanitized and dynamically themed', async () => {
     for (const detail of [false, true]) {
       if (detail) h.component.handleInput('enter');
       const lines = h.component.render(width);
-      assert.ok(lines.length <= 20);
+      assert.ok(lines.length <= 25);
       for (const line of lines) {
         assert.doesNotMatch(line, /[\x00-\x1f\x7f-\x9f]/);
-        assert.ok([...line].reduce((n, c) => n + (/[^\x00-\x7f]/u.test(c) ? 2 : 1), 0) <= width);
+        assert.ok([...line].reduce((n, c) => n + (/[\u2500-\u257f]/u.test(c) ? 1 : /[^\x00-\x7f]/u.test(c) ? 2 : 1), 0) <= width);
       }
       if (detail) h.component.handleInput('escape');
     }
   }
   let calls = 0;
-  h.ctx.ui.theme = { fg(_, text) { calls++; return text; } };
+  h.ctx.ui.theme = { fg(_, text) { calls++; return text; }, bg(_, text) { calls++; return text; } };
   h.component.invalidate(); h.component.render(80);
   assert.ok(calls > 0);
   h.close(); await h.result;
