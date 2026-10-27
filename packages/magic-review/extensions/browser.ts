@@ -52,8 +52,7 @@ export function widgetLines(run: ReviewRun): string[] {
   const stage = stages[run.stage ?? ''];
   return [
     `🔍 魔法审查 · ${states[run.state ?? ''] ?? clean(run.state)}${stage ? ` · ${stage}` : ''} · ${run.findings?.length ?? 0} 项发现`,
-    `调用 ${number(run.calls)}/${clean(run.budget?.maxCalls)} · ${tokens(run.usage?.totalTokens)}/${run.budget?.maxTokens === undefined ? '—' : tokens(run.budget.maxTokens)} 词元`,
-    `$${number(run.usage?.cost).toFixed(4)} · ${duration(elapsed(run))} / ${run.budget?.timeoutMs === undefined ? '—' : duration(number(run.budget.timeoutMs))}`,
+    `调用 ${number(run.calls)}/${clean(run.budget?.maxCalls)} · ${tokens(run.usage?.totalTokens)}/${run.budget?.maxTokens === undefined ? '—' : tokens(run.budget.maxTokens)} 词元 · ${duration(elapsed(run))} / ${run.budget?.timeoutMs === undefined ? '—' : duration(number(run.budget.timeoutMs))}`,
   ];
 }
 
@@ -151,7 +150,7 @@ export async function browseReview(ctx: ExtensionContext, run: ReviewRun): Promi
         if (!framed) return [...body, ...footer];
         // Match questionnaire's solid selection card: summary, body, fixed hints.
         return [border(`┌${'─'.repeat(width - 2)}┐`),
-          ...body.slice(0, 3), rule(), ...body.slice(3), rule(), ...footer,
+          ...body.slice(0, 2), rule(), ...body.slice(2), rule(), ...footer,
           border(`└${'─'.repeat(width - 2)}┘`)];
       },
       handleInput(data: string) {

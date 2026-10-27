@@ -213,14 +213,18 @@ export class ConfirmFeedbackDialog implements Focusable {
 		const inputPart = this.feedback.length > 0 || fbSelected ? inputDisplay : placeholder;
 		const plainLabel = (label: string) => label.replace(/^[✅❌🧹]\s*/u, "");
 		return renderSelectionCard({
-			width, theme: th, title: plainLabel(this.title), bodyLines,
+			width, theme: th, title: plainLabel(this.title), bodyLines, compact: true,
 			items: [
-				{ label: plainLabel(this.yesLabel), group: "操作" },
+				{ label: plainLabel(this.yesLabel) },
 				{ label: plainLabel(this.noLabel) },
 				{ label: `反馈：${inputPart}`, group: "可选反馈（拒绝时提交）" },
 			],
 			cursor: this.stop === "yes" ? 0 : this.stop === "no" ? 1 : 2,
-			hints: ["↑↓/Tab 移动 · 反馈行输入文字", "Enter 确认当前操作 · Esc 拒绝"],
+			hints: [
+				"↑↓/Tab 移动 · 反馈行输入文字 · Enter 提交 · Esc 取消",
+				"↑↓/Tab 移动 · Enter 提交 · Esc 取消",
+				"↑↓ 移动 · ↵ 提交 · Esc 取消",
+			],
 		});
 	}
 
@@ -1005,7 +1009,7 @@ export default function (pi: ExtensionAPI) {
 				const result = await confirmOrFeedback(
 					ctx,
 					"🧹 清空当前对话？",
-					"这将开始一个新会话，并从模型上下文中清除当前对话。\n当前会话文件仍会保留在磁盘上。",
+					"这将开始一个新会话，并从模型上下文中清除当前对话。",
 					{ yes: "✅ 是", no: "❌ 否" },
 				);
 				if (!result.allow) return;

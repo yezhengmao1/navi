@@ -34,13 +34,14 @@ test('review status uses compact subagent labels and render-time colors', () => 
   assert.match(text, /✅ 已完成/);
   assert.doesNotMatch(text, /completed|tokens/);
   assert.match(text, /2.6万\/40.0万 词元/);
-  assert.match(text, /\$0.3075 · 44s \/ 10m 0s/);
+  assert.doesNotMatch(text, /\$/);
+  assert.equal(widgetLines(completed)[1], '调用 2/8 · 2.6万/40.0万 词元 · 44s / 10m 0s');
   const colors = [];
   const widget = reviewWidget(completed, { fg(color, text) { colors.push(color); return text; } });
   // Mock treats box drawing as wide, so test body truncation separately from borders.
   for (const width of [0, 1, 2, 5, 6, 20, 80]) {
     const rows = widget.render(width);
-    assert.equal(rows.length, width === 0 ? 0 : width < 6 ? 3 : 5);
+    assert.equal(rows.length, width === 0 ? 0 : width < 6 ? 2 : 4);
     if (width < 6) for (const row of rows) assert.ok([...row].reduce((n, c) => n + (/[^\x00-\x7f]/u.test(c) ? 2 : 1), 0) <= width);
   }
   assert.ok(colors.includes('success'));
@@ -107,5 +108,5 @@ test('all action keys and exit', async () => {
     v: { action: 'recheck', findingId: '0' }, q: { action: 'discuss', findingId: '0' }, x: { action: 'cancel' }, u: { action: 'resume' }, escape: undefined })) {
     const h = harness(); h.component.handleInput(key); assert.deepEqual(await h.result, expected);
   }
-  assert.equal(widgetLines(run).length, 3);
+  assert.equal(widgetLines(run).length, 2);
 });

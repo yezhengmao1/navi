@@ -2,13 +2,6 @@ import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { Type } from '@earendil-works/pi-ai';
 import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
-import { collectCode, collectTex } from '../lib/collect.mjs';
-import { saveEvidence, saveReport, parseCommand } from '../lib/review.mjs';
-import { createRun, getRun, listRuns, updateRun, setFindingStatus, compareRuns } from '../lib/store.mjs';
-import { runReview } from '../lib/engine.mjs';
-import { routeReview, decodeEvidence } from '../lib/routing.mjs';
-import { executeVerification, probeVerification } from '../lib/verify.mjs';
-import { loadPaperImages, auditBibliography } from '../lib/paper-assets.mjs';
 import { browseReview, reviewWidget } from './browser.js';
 import { modelInvoker, teamInvoker, sumUsage } from './invoke.js';
 
@@ -23,7 +16,22 @@ const Finding = Type.Object({
   consequence: Type.String(), confidenceBasis: Type.String(), verification: Type.String(), suggestion: Type.String(),
 });
 
-export default function magicReview(pi: ExtensionAPI) {
+export default async function magicReview(pi: ExtensionAPI) {
+  // Pi awaits async factories. Keep ESM library loading asynchronous rather than
+  // relying on jiti's static-import -> synchronous require interop for .mjs.
+  const { collectCode, collectTex } = await import('../lib/collect.mjs');
+  const { saveEvidence, saveReport, parseCommand } = await import('../lib/review.mjs');
+  const { createRun, getRun, listRuns, updateRun, setFindingStatus, compareRuns } = await import('../lib/store.mjs');
+  const { runReview } = await import('../lib/engine.mjs');
+  const { routeReview, decodeEvidence } = await import('../lib/routing.mjs');
+  const { executeVerification, probeVerification } = await import('../lib/verify.mjs');
+  const { loadPaperImages, auditBibliography } = await import('../lib/paper-assets.mjs');
+  // Fail at extension startup, before registering partially usable tools.
+  for (const [name, value] of Object.entries({ collectCode, collectTex, saveEvidence, saveReport, parseCommand,
+    createRun, getRun, listRuns, updateRun, setFindingStatus, compareRuns, runReview, routeReview, decodeEvidence,
+    executeVerification, probeVerification, loadPaperImages, auditBibliography })) {
+    if (typeof value !== 'function') throw new Error(`Magic Review: missing function export ${name}; check that extensions/ and lib/ come from the same package revision and reload Pi.`);
+  }
   const active = new Map<string, AbortController>();
   let widgetHidden = false;
   const publish = (ctx: any, run: any) => {

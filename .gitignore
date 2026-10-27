@@ -1,6 +1,8 @@
 .claude/settings.json
 .claude/settings.local.json
 .mcp.json
+/.pi/mcp.json
+/.local/
 .claude/scheduled_tasks.lock
 node_modules/
 __pycache__/

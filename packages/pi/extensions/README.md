@@ -7,7 +7,6 @@ The extension set is grouped by responsibility:
 | UI | `magic-ui/index.ts` | Single entry point for all UI modules below |
 | Work recap | `idle-summary.ts` | After five idle minutes, append a Markdown work recap beneath the conversation |
 | Safety | `safety-guard.ts` | Review heavy/destructive commands, confirm sensitive writes and `/clear`, and collect rejection feedback |
-| Sampling | `siflow-sampling.ts` | Override sampling only for the explicitly matched siflow model |
 
 See [package setup](../README.md) for installation and migration. The optional legacy `install-extensions.sh` removes listed legacy extensions; native package installation does not. Run the following test commands from the package directory (`packages/pi/`), not this `extensions/` directory.
 
