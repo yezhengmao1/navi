@@ -12,7 +12,9 @@ async function load(t, missingCollectExports = false) {
   let source = stripTypeScriptTypes(await readFile(new URL('../extensions/index.ts', import.meta.url), 'utf8'));
   source = source.replace(/import \{ Type \} from '@earendil-works\/pi-ai';/, 'const Type = new Proxy({}, {get:()=> (...args)=>({args})});')
     .replace(/import\('(\.\.\/lib\/[^']+)'\)/g, (_, p) => `import('${new URL(p, new URL('../extensions/index.ts', import.meta.url))}')`)
-    .replace("import { browseReview, reviewWidget } from './browser.js';", 'const browseReview=async()=>undefined, reviewWidget=()=>({render:()=>[],invalidate(){}});');
+    .replace("import { browseReview, reviewWidget } from './browser.js';", 'const browseReview=async()=>undefined, reviewWidget=()=>({render:()=>[],invalidate(){}});')
+    .replace("import { showConfirmation } from '../../pi/extensions/magic-ui/confirmation.js';", 'const showConfirmation = (ctx, ...args) => ctx.ui.custom(...args);')
+    .replace("import { selectCard, inputCard } from '../../pi/extensions/magic-ui/dialogs.js';", 'const selectCard = (ctx, ...args) => ctx.ui.custom(...args), inputCard = selectCard;');
   if (missingCollectExports) source = source.replace(/await import\('[^']*\/lib\/collect\.mjs'\)/, 'await Promise.resolve({})');
   const invoke = stripTypeScriptTypes(await readFile(new URL('../extensions/invoke.ts', import.meta.url), 'utf8'));
   await writeFile(path.join(dir, 'invoke.mjs'), invoke);

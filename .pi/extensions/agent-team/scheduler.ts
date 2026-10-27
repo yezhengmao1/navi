@@ -1,3 +1,4 @@
+import { confirmPermission } from "../../../packages/pi/extensions/magic-ui/confirmation.js";
 import { createHash, randomUUID } from "node:crypto";
 import { stripVTControlCharacters } from "node:util";
 import { truncateToWidth } from "@earendil-works/pi-tui";
@@ -208,7 +209,7 @@ export function registerScheduler(pi: ExtensionAPI,
    const agent = agents.find(a => a.name === params.agent);
    if (!agent) throw new Error(`Unknown agent "${params.agent}". Available: ${agents.map(a => a.name).join(", ") || "none"}. Supply definitions: [{name: "${params.agent}", instructions: "..."}], or choose an existing saved role in the requested agentScope.`);
    if (agent.source === "project" && !ctx.isProjectTrusted()) {
-    if (!ctx.hasUI || !await ctx.ui.confirm("Schedule project-local agent?", `${agent.name}: runs with your machine permissions. Trust this agent for repeated execution?`))
+    if (!ctx.hasUI || !await confirmPermission(ctx, "Schedule project-local agent?", `${agent.name}: runs with your machine permissions. Trust this agent for repeated execution?`))
      throw new Error("Project agent not approved.");
    }
    if (signal?.aborted || createdIn !== generation) throw new Error("Cancelled or session changed");

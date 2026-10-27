@@ -1,3 +1,4 @@
+import { showConfirmation } from '../../../packages/pi/extensions/magic-ui/confirmation.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { fileURLToPath } from 'node:url';
 import { accessSync } from 'node:fs';
@@ -175,17 +176,20 @@ export function registerPanes(pi: ExtensionAPI) {
     if (signal.aborted) return { allow: false, feedback: 'Approval cancelled' };
     const high = request.risk !== 'low' && request.risk !== 'medium';
     let allow = !high;
+    let feedback: string | undefined;
     if (high && ctx.hasUI) {
       ctx.ui.notify(`成员 ${request.member} 请求高危授权：${request.title}`, 'warning');
-      allow = await locks.run('dialog', dialogSignal => ctx.ui.confirm(
+      const decision = await locks.run('dialog', dialogSignal => showConfirmation(ctx,
         `高危审批 · ${request.member} · ${request.title}`,
         `${request.body}\n\n工具：${request.toolName}\n请求：${request.toolCallId}\n完整操作：\n${JSON.stringify(request.input, null, 2)}\n\n仅批准本次操作。`,
-        { signal: dialogSignal }), signal);
+        undefined, dialogSignal), signal);
+      allow = decision.allow;
+      feedback = decision.allow ? undefined : decision.feedback;
     }
     if (signal.aborted) return { allow: false, feedback: 'Approval cancelled' };
     pi.appendEntry('agent-team-approval', { id: request.id, member: request.member, toolCallId: request.toolCallId,
       title: request.title, risk: request.risk, allow, automatic: !high });
-    return { allow, feedback: allow ? undefined : 'Lead denied the high-risk operation' };
+    return { allow, feedback: allow ? undefined : feedback || 'Lead denied the high-risk operation' };
   }
   async function ensureBroker(ctx: ExtensionContext): Promise<PermissionBroker> {
     if (brokerStarting) return brokerStarting;

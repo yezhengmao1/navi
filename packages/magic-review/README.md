@@ -8,6 +8,8 @@ Pi extension + skills for **local commit/range** and **LaTeX project** review. T
 pi install ./packages/magic-review
 ```
 
+Install from this repository checkout, keeping the sibling `packages/pi` directory: confirmation, selection and input cards share its UI primitives (the Pi UI extension itself need not be enabled). Explicit execution/network approvals remain per-operation, default-deny; RPC keeps its native dialog protocol.
+
 Already installed local packages load in place. Run `/reload`; existing team members need reload/restart. Host Pi supplies peer packages; no npm dependencies need installing.
 
 ## Entry points

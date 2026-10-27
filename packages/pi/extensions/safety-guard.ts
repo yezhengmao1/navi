@@ -28,9 +28,9 @@ import { uuidv7 } from "@earendil-works/pi-ai";
 import { homedir } from "node:os";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { isAbsolute } from "node:path";
-import type { ExtensionAPI, ExtensionContext, ExtensionUIContext, Theme, ToolCallEvent } from "@earendil-works/pi-coding-agent";
-import { CURSOR_MARKER, type Focusable, matchesKey, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-import { renderSelectionCard } from "./magic-ui/editor-footer.js";
+import type { ExtensionAPI, ExtensionContext, ToolCallEvent } from "@earendil-works/pi-coding-agent";
+import { showConfirmation, type ConfirmResult } from "./magic-ui/confirmation.js";
+export { ConfirmFeedbackDialog, type ConfirmResult } from "./magic-ui/confirmation.js";
 
 // --- per-tool safety timing (UI metadata, never model context) -------------
 type GuardPhase = "review" | "confirm";
@@ -82,7 +82,6 @@ export function guardPhase<T>(phase: GuardPhase, work: () => Promise<T>): Promis
 
 // --- confirmation with optional feedback ---------------------------------
 
-export type ConfirmResult = { allow: true } | { allow: false; feedback?: string };
 
 // A listener must claim synchronously; only its explicit reply can authorize.
 export interface TeamApprovalRequest {
@@ -112,129 +111,9 @@ function routingRisk(level: RiskLevel, reason: string): RiskLevel {
 		? "high" : level;
 }
 
-type Stop = "yes" | "no" | "feedback";
-
-export class ConfirmFeedbackDialog implements Focusable {
-	focused = false;
-	private stop: Stop = "no";
-	private feedback = "";
-	private cursor = 0;
-
-	constructor(
-		private theme: Theme,
-		private ui: ExtensionUIContext,
-		private done: (result: ConfirmResult) => void,
-		private title: string,
-		private body: string,
-		private yesLabel = "✅ 允许",
-		private noLabel = "❌ 拒绝",
-	) {}
-
-	handleInput(data: string): void {
-		if (matchesKey(data, "escape")) {
-			this.done({ allow: false, feedback: undefined });
-			return;
-		}
-
-		if (matchesKey(data, "up") || matchesKey(data, "shift+tab")) {
-			this.stop = this.stop === "yes" ? "feedback" : this.stop === "no" ? "yes" : "no";
-			return;
-		}
-		if (matchesKey(data, "down") || matchesKey(data, "tab")) {
-			this.stop = this.stop === "yes" ? "no" : this.stop === "no" ? "feedback" : "yes";
-			return;
-		}
-
-		// Left/right also move between the two buttons for convenience.
-		if (this.stop !== "feedback" && matchesKey(data, "left")) {
-			this.stop = this.stop === "yes" ? "no" : "yes";
-			return;
-		}
-		if (this.stop !== "feedback" && matchesKey(data, "right")) {
-			this.stop = this.stop === "yes" ? "no" : "yes";
-			return;
-		}
-
-		if (matchesKey(data, "return") || matchesKey(data, "enter")) {
-			if (this.stop === "yes") {
-				this.done({ allow: true });
-			} else {
-				this.done({ allow: false, feedback: this.feedback.trim() || undefined });
-			}
-			return;
-		}
-
-		// Editing the feedback field.
-		if (this.stop === "feedback") {
-			if (matchesKey(data, "backspace")) {
-				if (this.cursor > 0) {
-					this.feedback = this.feedback.slice(0, this.cursor - 1) + this.feedback.slice(this.cursor);
-					this.cursor--;
-				}
-				return;
-			}
-			if (matchesKey(data, "delete")) {
-				if (this.cursor < this.feedback.length) {
-					this.feedback = this.feedback.slice(0, this.cursor) + this.feedback.slice(this.cursor + 1);
-				}
-				return;
-			}
-			if (matchesKey(data, "left")) {
-				this.cursor = Math.max(0, this.cursor - 1);
-				return;
-			}
-			if (matchesKey(data, "right")) {
-				this.cursor = Math.min(this.feedback.length, this.cursor + 1);
-				return;
-			}
-			// Ignore other control sequences; accept single printable chars.
-			if (data.length === 1 && data.charCodeAt(0) >= 32) {
-				this.feedback = this.feedback.slice(0, this.cursor) + data + this.feedback.slice(this.cursor);
-				this.cursor++;
-			}
-		}
-	}
-
-	render(width: number): string[] {
-		const th = this.theme;
-		const bodyWidth = Math.max(1, width >= 6 ? width - 4 : width);
-		const bodyLines = this.body.split("\n").flatMap(line =>
-			wrapTextWithAnsi(th.fg("text", line), bodyWidth));
-		const fbSelected = this.stop === "feedback";
-		let inputDisplay = this.feedback;
-		if (fbSelected) {
-			const before = inputDisplay.slice(0, this.cursor);
-			const cursorChar = this.cursor < inputDisplay.length ? inputDisplay[this.cursor] : " ";
-			const after = inputDisplay.slice(this.cursor + 1);
-			const marker = this.focused ? CURSOR_MARKER : "";
-			inputDisplay = `${before}${marker}\x1b[7m${cursorChar}\x1b[27m${after}`;
-		}
-		const placeholder = this.feedback.length === 0 ? th.fg("dim", "(可选，回车拒绝时提交)") : "";
-		const inputPart = this.feedback.length > 0 || fbSelected ? inputDisplay : placeholder;
-		const plainLabel = (label: string) => label.replace(/^[✅❌🧹]\s*/u, "");
-		return renderSelectionCard({
-			width, theme: th, title: plainLabel(this.title), bodyLines, compact: true,
-			items: [
-				{ label: plainLabel(this.yesLabel) },
-				{ label: plainLabel(this.noLabel) },
-				{ label: `反馈：${inputPart}`, group: "可选反馈（拒绝时提交）" },
-			],
-			cursor: this.stop === "yes" ? 0 : this.stop === "no" ? 1 : 2,
-			hints: [
-				"↑↓/Tab 移动 · 反馈行输入文字 · Enter 提交 · Esc 取消",
-				"↑↓/Tab 移动 · Enter 提交 · Esc 取消",
-				"↑↓ 移动 · ↵ 提交 · Esc 取消",
-			],
-		});
-	}
-
-	invalidate(): void {}
-	dispose(): void {}
-}
-
 /**
- * Show the combined confirm-with-feedback dialog. Falls back to a plain
- * confirm (no feedback) when there is no UI.
+ * Show the shared confirmation card, routing managed approvals to the lead.
+ * Without UI, deny; RPC clients use their native confirmation protocol.
  *
  * Takes the ExtensionContext (not just ctx.ui) so callers can pass `ctx`
  * directly from an event handler, matching how the built-in confirm helpers
@@ -275,13 +154,7 @@ export async function confirmOrFeedback(
 		if (process.argv.includes("--team-approval-config"))
 			return { allow: false, feedback: "Lead approval relay unavailable; not approved" };
 	}
-	const ui: ExtensionUIContext = ctx.ui;
-	if (!ctx.hasUI) return { allow: false, feedback: undefined };
-
-	return guardPhase("confirm", () => ui.custom<ConfirmResult>(
-		(_tui, theme, _kb, done) =>
-			new ConfirmFeedbackDialog(theme, ui, done, title, body, labels?.yes, labels?.no),
-	));
+	return guardPhase("confirm", () => showConfirmation(ctx, title, body, labels, ctx.signal));
 }
 
 // --- static heaviness detection -------------------------------------------

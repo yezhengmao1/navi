@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { load, tui } from './helpers.mjs';
 
-const { ConfirmFeedbackDialog } = await load('../safety-guard');
+const { ConfirmFeedbackDialog, showConfirmation } = await load('confirmation');
 const theme = { fg: (_c, s) => s, bg: (_c, s) => s, bold: s => s };
 const make = done => new ConfirmFeedbackDialog(theme, {}, done, '🧹 清空当前对话？', '这将开始一个新会话，并从模型上下文中清除当前对话。', '✅ 是', '❌ 否');
 
@@ -48,4 +48,34 @@ test('default rejects, explicit approval works, feedback and escape stay safe', 
   assert.deepEqual(result, { allow: false, feedback: '不' });
   feedback.handleInput('\x1b');
   assert.deepEqual(result, { allow: false, feedback: undefined });
+  make(done).handleInput('\x03');
+  assert.deepEqual(result, { allow: false, feedback: undefined });
+});
+
+test('shared confirmation denies without UI or after abort and closes pending dialog', async () => {
+  const controller = new AbortController();
+  let dialog;
+  const ctx = { hasUI: true, mode: 'tui', ui: {
+    custom: factory => new Promise(resolve => { dialog = factory({}, theme, {}, resolve); }),
+  } };
+  const pending = showConfirmation(ctx, '高危审批', '完整操作', undefined, controller.signal);
+  assert.ok(dialog instanceof ConfirmFeedbackDialog);
+  controller.abort();
+  assert.deepEqual(await pending, { allow: false });
+  assert.deepEqual(await showConfirmation({ hasUI: false }, 'title', 'body'), { allow: false });
+  assert.deepEqual(await showConfirmation(ctx, 'title', 'body', undefined, controller.signal), { allow: false });
+});
+
+test('shared confirmation returns rejection feedback and uses RPC fallback only in RPC', async () => {
+  const ctx = { hasUI: true, mode: 'tui', ui: {
+    custom: factory => new Promise(resolve => {
+      const dialog = factory({}, theme, {}, resolve);
+      dialog.handleInput('\t');
+      dialog.handleInput('不');
+      dialog.handleInput('\r');
+    }),
+  } };
+  assert.deepEqual(await showConfirmation(ctx, '审批', '操作'), { allow: false, feedback: '不' });
+  const rpc = { hasUI: true, mode: 'rpc', ui: { confirm: async () => false } };
+  assert.deepEqual(await showConfirmation(rpc, '审批', '操作'), { allow: false });
 });

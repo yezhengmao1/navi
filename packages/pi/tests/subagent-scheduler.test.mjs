@@ -65,7 +65,7 @@ test('project confirmation, background delivery and session cleanup', async t =>
  registerScheduler({registerTool: x => tool = x, registerCommand() {}, on: (name, fn) => hooks.set(name, fn),
   sendMessage: (...args) => messages.push(args)}, async () => { executions++; return 'ok'; });
  const ctx = {cwd, mode: 'tui', hasUI: true, isProjectTrusted: () => false,
-  ui: {confirm: async () => approved}};
+  ui: {custom: async () => ({ allow: approved })}};
  const params = {action: 'create', agent: 'check', agentScope: 'project', task: 'check once', intervalSeconds: 1};
  await assert.rejects(tool.execute('', params, undefined, undefined, ctx), /not approved/);
  approved = true;

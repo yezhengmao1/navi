@@ -6,6 +6,7 @@ import { load } from './helpers.mjs';
 const { PermissionBroker, requestApproval } = await load('../../../../.pi/extensions/agent-team/permission-broker');
 const { registerPanes } = await load('../../../../.pi/extensions/agent-team/panes');
 const { default: registerMember } = await load('../../../../.pi/extensions/agent-team/member-permissions');
+const { confirmPermission } = await load('confirmation');
 const req = (risk = 'medium') => ({ source: 'safety-guard', session: '/session/member.jsonl', risk, title: '操作审批', body: '完整命令：移动文件', toolCallId: 'call-1', toolName: 'bash', input: { command: 'mv 源文件 目标文件' } });
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
 const rawRequest = (config, input) => new Promise((resolve, reject) => {
@@ -105,7 +106,11 @@ test('lead centrally auto-approves medium, asks user for high, and launches mana
       return { code: 0, stdout: JSON.stringify({ result }) };
     },
   };
-  const ctx = { cwd: '/repo', mode: 'tui', hasUI: true, ui: { notify() {}, confirm: async (...args) => { dialogs.push(args); return approve; } }, sessionManager: { getSessionId: () => 'lead', getBranch: () => entries } };
+  const ctx = { cwd: '/repo', mode: 'tui', hasUI: true, ui: { notify() {}, custom: async factory => {
+    const dialog = factory({}, {}, {}, () => {});
+    dialogs.push([dialog.title, dialog.body]);
+    return { allow: approve };
+  } }, sessionManager: { getSessionId: () => 'lead', getBranch: () => entries } };
   registerPanes(pi);
   const invoke = p => tool.execute('id', p, undefined, undefined, ctx);
   try {
@@ -139,13 +144,14 @@ test('lead centrally auto-approves medium, asks user for high, and launches mana
     childHooks.get('before_agent_start')({}, childCtx);
     assert.deepEqual(selectedTools, ['read', 'bash', 'network_search']);
     assert.equal(await childCtx.ui.confirm('Ordinary extension permission', 'Use the configured network tool'), true);
+    assert.equal(await confirmPermission(childCtx, 'Project-local agent', 'Trust this project'), true);
     assert.equal(dialogs.length, 2, 'ordinary extension confirm is automatically decided by lead');
     approve = false;
     const childResult = await new Promise(resolve => childBus.emit('agent-team:approval', { ...req('high'), ctx: childCtx, handled: false, reply: resolve }));
     assert.equal(childResult.allow, false); assert.equal(dialogs.length, 3);
     childHooks.get('session_shutdown')();
     // A member session changed after consent invalidates that approval.
-    ctx.ui.confirm = async () => { agent.agent_session.value = '/different/session'; return true; };
+    ctx.ui.custom = async () => { agent.agent_session.value = '/different/session'; return { allow: true }; };
     assert.equal((await requestApproval(config, req('high'))).allow, false);
   } finally {
     await hooks.get('session_shutdown')();

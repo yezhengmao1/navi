@@ -3,6 +3,8 @@ import { Type } from '@earendil-works/pi-ai';
 import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
 import { browseReview, reviewWidget } from './browser.js';
+import { showConfirmation } from '../../pi/extensions/magic-ui/confirmation.js';
+import { selectCard, inputCard } from '../../pi/extensions/magic-ui/dialogs.js';
 import { modelInvoker, teamInvoker, sumUsage } from './invoke.js';
 
 const skillPath = (kind: string) => fileURLToPath(new URL(`../skills/magic-review-${kind}/SKILL.md`, import.meta.url));
@@ -87,8 +89,8 @@ export default async function magicReview(pi: ExtensionAPI) {
           return;
         }
         if (!input && ctx.hasUI) {
-          const choice = await ctx.ui.select('Magic Review', ['code', 'paper']); if (!choice) return;
-          const target = await ctx.ui.input(choice === 'code' ? 'Commit or A..B (empty = HEAD)' : 'LaTeX entry path');
+          const choice = await selectCard(ctx, 'Magic Review · 审查类型', ['code', 'paper']); if (!choice) return;
+          const target = await inputCard(ctx, choice === 'code' ? '提交或 A..B（留空使用 HEAD）' : 'LaTeX 入口文件路径');
           if (target === undefined || (choice === 'paper' && !target.trim())) return;
           input = `${choice} ${target}`;
         }
@@ -188,8 +190,10 @@ export default async function magicReview(pi: ExtensionAPI) {
       if (p.action === 'probe') return result(await probeVerification({ signal }));
       if (!ctx.hasUI) throw new Error('Execution requires interactive explicit authorization');
       const request = { cwd: p.cwd ?? ctx.cwd, kind: p.kind, command: p.command, args: p.args, entry: p.entry, timeoutMs: p.timeoutMs };
-      const decision = await ctx.ui.select(`Run isolated verification? Source tree (including hidden files) becomes readable; choose a credential-free tree. Temporary output is writable.\n${JSON.stringify(request)}`, ['Cancel', 'Run isolated verification']);
-      if (decision !== 'Run isolated verification') return result({ status: 'denied', reason: 'Not explicitly authorized' });
+      const decision = await showConfirmation(ctx, 'Magic Review · 执行隔离验证？',
+        `源文件树（包括隐藏文件）将可读，请选择不含凭证的目录。临时输出目录可写。仅授权本次执行。\n${JSON.stringify(request, null, 2)}`,
+        { yes: '执行隔离验证', no: '取消' }, signal);
+      if (!decision.allow) return result({ status: 'denied', reason: 'Not explicitly authorized' });
       return result(await executeVerification({ ...request, signal }));
     },
   });
@@ -202,8 +206,10 @@ export default async function magicReview(pi: ExtensionAPI) {
       const run = await getRun(ctx.cwd, p.id);
       if (run.kind !== 'paper') throw new Error('Paper run required');
       if (!ctx.hasUI) throw new Error('External reference lookup requires interactive authorization');
-      const decision = await ctx.ui.select('Send literal bibliography DOIs to api.crossref.org for metadata lookup?', ['Cancel', 'Look up DOI metadata']);
-      if (decision !== 'Look up DOI metadata') return result({ status: 'denied' });
+      const decision = await showConfirmation(ctx, 'Magic Review · 查询 DOI 元数据？',
+        '仅将参考文献中的 DOI 标识符发送至 api.crossref.org 查询元数据。仅授权本次查询。',
+        { yes: '查询 DOI 元数据', no: '取消' }, signal);
+      if (!decision.allow) return result({ status: 'denied' });
       const evidence = decodeEvidence(await readFile(run.evidencePath, 'utf8'));
       const references = await auditBibliography(evidence, { signal, maxEntries: p.maxEntries });
       await updateRun(ctx.cwd, run.id, (draft: any) => { draft.referenceAudits ??= []; draft.referenceAudits.push({ at: new Date().toISOString(), references }); });

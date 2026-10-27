@@ -12,6 +12,7 @@
  * Uses JSON mode to capture structured output from subagents.
  */
 
+import { confirmPermission } from "../../../packages/pi/extensions/magic-ui/confirmation.js";
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -569,7 +570,7 @@ export default function (pi: ExtensionAPI) {
 				if (projectAgentsRequested.length > 0) {
 					const names = projectAgentsRequested.map((a) => a.name).join(", ");
 					const dir = discovery.projectAgentsDir ?? "(unknown)";
-					const ok = await ctx.ui.confirm(
+					const ok = await confirmPermission(ctx,
 						"Run project-local agents?",
 						`Agents: ${names}\nSource: ${dir}\n\nProject agents are repo-controlled. Only continue for trusted repositories.`,
 					);

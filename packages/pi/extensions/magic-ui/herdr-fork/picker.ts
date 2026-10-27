@@ -1,5 +1,5 @@
 import { matchesKey } from '@earendil-works/pi-tui';
-import { renderSelectionCard } from '../editor-footer.js';
+import { renderSelectionCard } from '../selection-card.js';
 
 /** Keyboard-only session card. Navigation never creates a pane until Enter. */
 export function createSessionPicker(tui: any, theme: any, done: (value?: string) => void, labels: string[], options: { title?: string; scope?: string; enterHint?: string; itemNoun?: string } = {}) {
@@ -27,7 +27,7 @@ export function createSessionPicker(tui: any, theme: any, done: (value?: string)
     },
     handleInput(data: string) {
       if (finished) return;
-      if (matchesKey(data, 'escape')) { finish(); return; }
+      if (matchesKey(data, 'escape') || matchesKey(data, 'ctrl+c')) { finish(); return; }
       if (matchesKey(data, 'enter')) {
         if (labels.length) finish(labels[cursor]);
         return;

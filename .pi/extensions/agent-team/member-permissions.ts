@@ -37,6 +37,8 @@ export default function registerMemberPermissions(pi: ExtensionAPI) {
       return (await relay(ctx, { source: 'extension-confirm', risk: 'medium', title, body,
         toolCallId: `confirm-${randomUUID()}`, toolName: 'extension-confirm', input: { title, body } }, signal)).allow;
     };
+    // Shared card confirmations must preserve this relay, not open local consent.
+    Object.defineProperty(forwarded, Symbol.for('navi.team-confirm-relay'), { value: true });
     ui.confirm = forwarded;
     restoreUI = () => { if (ui.confirm === forwarded) ui.confirm = original; };
   }
