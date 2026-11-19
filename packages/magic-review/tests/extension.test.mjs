@@ -9,9 +9,9 @@ import path from 'node:path';
 async function load(t, missingCollectExports = false) {
   const dir = await mkdtemp(path.join(tmpdir(), 'magic-ext-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
-  let source = stripTypeScriptTypes(await readFile(new URL('../extensions/index.ts', import.meta.url), 'utf8'));
+  let source = stripTypeScriptTypes(await readFile(new URL('../extensions/magic-review.ts', import.meta.url), 'utf8'));
   source = source.replace(/import \{ Type \} from '@earendil-works\/pi-ai';/, 'const Type = new Proxy({}, {get:()=> (...args)=>({args})});')
-    .replace(/import\('(\.\.\/lib\/[^']+)'\)/g, (_, p) => `import('${new URL(p, new URL('../extensions/index.ts', import.meta.url))}')`)
+    .replace(/import\('(\.\.\/lib\/[^']+)'\)/g, (_, p) => `import('${new URL(p, new URL('../extensions/magic-review.ts', import.meta.url))}')`)
     .replace("import { browseReview, reviewWidget } from './browser.js';", 'const browseReview=async()=>undefined, reviewWidget=()=>({render:()=>[],invalidate(){}});')
     .replace("import { showConfirmation } from '../../pi/extensions/magic-ui/confirmation.js';", 'const showConfirmation = (ctx, ...args) => ctx.ui.custom(...args);')
     .replace("import { selectCard, inputCard } from '../../pi/extensions/magic-ui/dialogs.js';", 'const selectCard = (ctx, ...args) => ctx.ui.custom(...args), inputCard = selectCard;');

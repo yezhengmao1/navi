@@ -1,0 +1,6 @@
+{
+  "packages": [
+    "../packages/pi",
+    "../packages/magic-review"
+  ]
+}

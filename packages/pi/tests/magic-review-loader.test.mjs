@@ -11,9 +11,13 @@ import { root } from './helpers.mjs';
 const require = createRequire(path.join(root, 'package.json'));
 const { createJiti } = require('jiti');
 let aiEntry;
-try { aiEntry = require.resolve('@earendil-works/pi-ai/compat'); }
-catch { aiEntry = path.join(root, '../pi-ai/dist/index.js'); }
-const entry = fileURLToPath(new URL('../../magic-review/extensions/index.ts', import.meta.url));
+// Mirror Pi's loader: newer releases expose Type through the extension view.
+try { aiEntry = require.resolve(path.join(root, 'dist/core/extensions/pi-ai-extension-view.js')); }
+catch {
+  try { aiEntry = require.resolve('@earendil-works/pi-ai/compat'); }
+  catch { aiEntry = path.join(root, '../pi-ai/dist/index.js'); }
+}
+const entry = fileURLToPath(new URL('../../magic-review/extensions/magic-review.ts', import.meta.url));
 
 // Unlike the unit harness, load the actual TS entry and all its dependencies
 // through Pi's jiti, exercising both native and transformed ESM loading.

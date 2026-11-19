@@ -48,7 +48,7 @@ def run(name):
               'Team backend is explicitly authorized for this acceptance test. After completion, only summarize actual state and report paths. '
               'If any call fails, report it and stop; do not retry or fabricate findings.')
     command = ['pi', '--offline', '--no-mcp', '--no-context-files', '--no-skills', '--no-extensions', '--no-session', '--approve',
-               '-e', str(package / 'extensions/index.ts'), '--mode', 'json', '--print']
+               '-e', str(package / 'extensions/magic-review.ts'), '--mode', 'json', '--print']
     tools = ['magic_review_prepare', 'magic_review_run']
     if backend == 'team':
         command += ['-e', str(repo / '.pi/extensions/agent-team/index.ts')]
