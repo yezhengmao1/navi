@@ -4,6 +4,7 @@ import registerEditorFooter from "./editor-footer.js";
 import registerCompact from "./compact.js";
 import registerQuestionnaire from "./questionnaire.js";
 import registerQuota from "./quota.js";
+import registerConfab from "./confab.js";
 import registerHerdrFork from "./herdr-fork/index.js";
 import registerSessionMention from "./session-mention.js";
 import registerBlockTiming from "./block-timing.js";
@@ -52,6 +53,7 @@ export default function (pi: ExtensionAPI) {
   registerCompact(pi);
   registerQuestionnaire(pi);
   registerQuota(pi);
+  registerConfab(pi);
   registerHerdrFork(pi);
   registerSessionMention(pi);
 }
