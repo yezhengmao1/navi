@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { load, tui, root } from './helpers.mjs';
 import { join } from 'node:path';
-const { getAgentDir } = await import(root + '/dist/index.js');
+const { getAgentDir, SessionManager } = await import(root + '/dist/index.js');
 const { loadSessions, sessionAutocomplete, referenceIds, resolveReference, citeSessions, sessionListCache, default: register } = await load('session-mention');
 
 test('default session scope is scanned once; custom session directories are still merged', async () => {
@@ -38,7 +38,7 @@ test('completion stops after 30 results, reuses search metadata, and skips cance
   assert.equal(loads, 3, 'already aborted requests must not load sessions');
 });
 
-test('real MagicEditor opens dollar candidates and Escape cancels without changing text', async () => {
+async function editorHarness(sessions = [{ id: 'abc', name: '候选会话', cwd: '/work' }]) {
   const { default: registerEditor } = await load('editor-footer');
   const handlers = new Map();
   const identity = s => s;
@@ -54,11 +54,16 @@ test('real MagicEditor opens dollar candidates and Escape cancels without changi
   registerEditor({ on(name, handler) { handlers.set(name, handler); }, events: {
     on() { return () => {}; }, emit(name, event) {
       if (name === 'magic-ui:session-completion') event.provider = sessionAutocomplete(event.provider,
-        async () => [{ id: 'abc', name: '候选会话', cwd: '/work' }]);
+        async () => sessions);
     },
   } });
   handlers.get('session_start')({}, ctx);
   editor.setAutocompleteProvider(new tui.CombinedAutocompleteProvider([], '/tmp'));
+  return { editor, ctx };
+}
+
+test('real MagicEditor opens dollar candidates and Escape cancels without changing text', async () => {
+  const { editor } = await editorHarness();
   editor.handleInput('$');
   await new Promise(resolve => setTimeout(resolve, 150));
   assert.equal(editor.isShowingAutocomplete(), true);
@@ -66,7 +71,7 @@ test('real MagicEditor opens dollar candidates and Escape cancels without changi
   assert.match(rendered, /候选会话/);
   assert.match(rendered, /引用其他会话/);
   assert.match(rendered, /┌─/);
-  assert.match(rendered, /Enter 插入引用/);
+  assert.match(rendered, /Enter 插入路径引用/);
   assert.equal(editor.getText(), '$', 'one match must not be auto-inserted');
   editor.handleInput('\x1b');
   assert.equal(editor.isShowingAutocomplete(), false);
@@ -74,6 +79,61 @@ test('real MagicEditor opens dollar candidates and Escape cancels without changi
   editor.handleInput('x');
   await new Promise(resolve => setTimeout(resolve, 150));
   assert.equal(editor.getText(), '$x');
+});
+
+test('inline picker matches command card across navigation, resizing and filtering; Enter only inserts', async () => {
+  const { createSessionPicker } = await load('herdr-fork/picker');
+  const { mentionLabel, mentionPickerOptions } = await load('mention-picker');
+  const sessions = Array.from({ length: 24 }, (_, i) => ({ id: `id-${i}`, name: `会话 ${i}`, cwd: '/work', firstMessage: '' }));
+  const { editor, ctx } = await editorHarness(sessions);
+  let submitted = false, selected;
+  editor.onSubmit = () => { submitted = true; };
+  const picker = createSessionPicker({ terminal: { rows: 40 }, requestRender() {} }, ctx.ui.theme,
+    value => { selected = value; }, sessions.map(mentionLabel), mentionPickerOptions);
+  editor.handleInput('$');
+  await new Promise(resolve => setTimeout(resolve, 150));
+  const card = width => {
+    const lines = editor.render(width);
+    return lines.slice(lines.findIndex(line => line.startsWith('┌')));
+  };
+  for (const key of ['\x1b[A', '\x1b[B', '\x1b[C', '\x1b[C', '\x1b[C', '\x1b[D']) {
+    picker.handleInput(key); editor.handleInput(key);
+    for (const width of [24, 80, 140]) {
+      assert.deepEqual(card(width), picker.render(width).slice(1));
+      assert.ok(editor.render(width).every(line => tui.visibleWidth(line) <= width));
+    }
+    assert.equal(editor.getText(), '$');
+  }
+  picker.handleInput('\r'); editor.handleInput('\r');
+  const session = sessions.find(s => mentionLabel(s) === selected);
+  assert.equal(editor.getText(), `$session:${session.id} `);
+  assert.equal(editor.isShowingAutocomplete(), false);
+  assert.equal(submitted, false);
+  editor.setText('参考 '); editor.handleInput('$'); editor.handleInput('id-23');
+  await new Promise(resolve => setTimeout(resolve, 150));
+  assert.match(card(120).join('\n'), /1 个会话 · 1\/1/);
+  assert.match(card(120).join('\n'), /会话 23/);
+  editor.handleInput('\t');
+  assert.equal(editor.getText(), '参考 $session:id-23 ');
+  assert.equal(submitted, false);
+});
+
+test('an aborted in-flight metadata load cannot reopen dollar suggestions', async () => {
+  let finish;
+  const provider = sessionAutocomplete({}, () => new Promise(resolve => { finish = resolve; }));
+  const controller = new AbortController();
+  const pending = provider.getSuggestions(['$'], 0, 1, { signal: controller.signal });
+  controller.abort(); finish([{ id: 'late', name: 'late', cwd: '/work' }]);
+  assert.equal(await pending, null);
+});
+
+test('unsupported completion internals fall back safely and non-session suggestions are untouched', async () => {
+  const { mentionCompletionState } = await load('mention-picker');
+  assert.equal(mentionCompletionState({ isShowingAutocomplete: () => true }), undefined);
+  assert.equal(mentionCompletionState({ isShowingAutocomplete: () => false }), undefined);
+  const item = { value: '/help' };
+  assert.equal(mentionCompletionState({ isShowingAutocomplete: () => true,
+    autocompleteList: { filteredItems: [item], getSelectedItem: () => item, setSelectedIndex() {} } }), undefined);
 });
 
 test('session list cache shares pending requests, expires, changes scope and retries errors', async () => {
@@ -137,6 +197,40 @@ test('inline dollar completion delegates native input, filters, inserts and canc
   controller.abort();
   assert.equal(await provider.getSuggestions(['$'], 0, 1, options), null);
   assert.deepEqual(referenceIds('$session:abc @session:old'), ['abc']);
+});
+
+test('command and inline picker share local metadata; submitted references cite the local file', async t => {
+  const handlers = new Map(), commands = new Map();
+  let completion, lists = 0, draft = 'draft';
+  const local = { id: 'local-session', path: '/sessions/local.jsonl', name: 'Local session',
+    cwd: '/work', firstMessage: '', modified: new Date() };
+  t.mock.method(SessionManager, 'listAll', async () => { lists++; return [local]; });
+  const theme = { fg: (_, s) => s, bg: (_, s) => s, bold: s => s };
+  let commandCard;
+  const ctx = { cwd: '/work', mode: 'tui', hasUI: true,
+    sessionManager: { getSessionId: () => 'current', getSessionDir: () => join(getAgentDir(), 'sessions', '--work--') },
+    ui: { notify() {}, getEditorText: () => draft, setEditorText: text => { draft = text; },
+      custom: async factory => {
+        let value;
+        const picker = factory({ terminal: { rows: 40 }, requestRender() {} }, theme, {}, result => { value = result; });
+        commandCard = picker.render(120);
+        picker.handleInput('\r');
+        return value;
+      } },
+  };
+  register({ events: { on: (_, fn) => { completion = fn; } },
+    on: (name, fn) => handlers.set(name, fn), registerCommand: (name, cmd) => commands.set(name, cmd) },
+    { scan: async () => ({ sessions: [], warnings: [] }) });
+  await commands.get('mention').handler('Local', ctx);
+  assert.equal(draft, 'draft $session:local-session ');
+  const event = { ctx, provider: {} }; completion(event);
+  const result = await event.provider.getSuggestions(['$Local'], 0, 6, { signal: new AbortController().signal });
+  assert.match(commandCard.join('\n'), /Local session/);
+  assert.ok(commandCard.some(line => line.includes(result.items[0].label)));
+  assert.equal(lists, 1);
+  const transformed = await handlers.get('input')({ text: draft }, ctx);
+  assert.equal(transformed.action, 'transform');
+  assert.match(transformed.text, /\/sessions\/local.jsonl/);
 });
 
 test('resolve exact and unique prefixes only', () => {

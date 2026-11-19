@@ -243,6 +243,50 @@ test('lifecycle persists only custom data, restores branch and cleans up', () =>
   handlers.get('session_shutdown')();
 });
 
+test('session replacement never reads stale ctx from assistant or tool render callbacks', () => {
+  const handlers = new Map();
+  const controller = register({ events: { on: () => () => {} }, on: (name, fn) => handlers.set(name, fn) });
+  let stale = false;
+  const ctx = { get ui() {
+    assert.equal(stale, false, 'stale session ctx');
+    return { theme: { fg: (_, s) => s, bg: (_, s) => s } };
+  } };
+  const node = new AssistantMessageComponent(message());
+  const tool = { toolCallId: 'a', toolName: 'bash', result: { durationMs: 100 },
+    updateResult() {}, render: () => ['bash test'] };
+  controller.mount({ children: [node, tool], requestRender() {} }, ctx);
+  const children = node.contentContainer.children.filter(child => typeof child.render === 'function');
+  stale = true;
+  assert.doesNotThrow(() => node.render(80));
+  assert.doesNotThrow(() => tool.render(80));
+  handlers.get('session_shutdown')();
+  for (const child of children) {
+    assert.doesNotMatch(plain(child.render(80)), / Output| Thinking$/);
+  }
+  controller.dispose();
+});
+
+test('child wrappers are restored on streaming replacement, detach and disposal', () => {
+  for (const action of ['update', 'detach', 'dispose']) {
+    let active = true;
+    const child = { render: () => ['hello'] };
+    const original = child.render;
+    const node = { lastMessage: { ...message(), content: [{ type: 'text', text: 'hello' }] },
+      contentContainer: { children: [{}, child] },
+      updateContent() { this.contentContainer.children = [{}, { render: () => ['new'] }]; } };
+    const adapter = blockTimingAdapter(new BlockClock(), s => { assert.ok(active); return s; });
+    adapter.update({ children: [node] });
+    const wrapped = child.render;
+    if (action === 'update') node.updateContent();
+    else if (action === 'detach') adapter.update({ children: [] });
+    else adapter.dispose();
+    active = false;
+    assert.equal(child.render, original, action);
+    assert.deepEqual(wrapped.call(child, 80), ['hello'], 'retained wrapper must also be inert');
+    adapter.dispose();
+  }
+});
+
 test('guard stages exclude execution while reviewing, waiting, or blocked', () => {
   const guard = { toolCallId: 'a', reviewMs: 1200, waitMs: 0, phase: 'confirm', phaseStarted: 2000 };
   assert.equal(guardTimingLabel(guard, 99999, 7300), '审查 1.2s · 等待确认 5.3s');

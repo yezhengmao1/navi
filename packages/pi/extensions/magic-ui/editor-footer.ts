@@ -34,6 +34,8 @@ import {
 } from "@earendil-works/pi-tui";
 
 import { renderSelectionCard, type MagicSelectionCard } from "./selection-card.js";
+import { renderSessionPicker, sessionPickerCursor } from "./herdr-fork/picker.js";
+import { mentionCompletionState, mentionPickerOptions } from "./mention-picker.js";
 export { renderSelectionCard, type MagicSelectionCard } from "./selection-card.js";
 
 import { staticMessageBackground, paintStaticMessage } from "./message-flow.js";
@@ -397,7 +399,6 @@ export default function (pi: ExtensionAPI) {
 		class MagicEditor extends CustomEditor {
 			private renderedContentHeight = 0;
 			private sessionCompletionCard = false;
-			private completionBodyRows = 0;
 
 			setAutocompleteProvider(provider: AutocompleteProvider) {
 				const event = { ctx, provider };
@@ -406,6 +407,17 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			handleInput(data: string) {
+				const completion = mentionCompletionState(this);
+				if (completion) {
+					const key = this.pickerKeys.matches(data, "tui.select.up") ? "\x1b[A"
+						: this.pickerKeys.matches(data, "tui.select.down") ? "\x1b[B" : data;
+					const next = sessionPickerCursor(key, completion.cursor, completion.labels.length);
+					if (next !== undefined) {
+						completion.select(next);
+						this.pickerTui.requestRender();
+						return;
+					}
+				}
 				super.handleInput(data);
 				// Older running Pi editors ignore provider.triggerCharacters even after
 				// /reload. Request the normal (not force/Tab) picker after inserting $.
@@ -417,8 +429,8 @@ export default function (pi: ExtensionAPI) {
 				}
 			}
 
-			constructor(tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) {
-				super(tui, theme, keybindings, { paddingX: EDITOR_PADDING });
+			constructor(private pickerTui: TUI, theme: EditorTheme, private pickerKeys: KeybindingsManager) {
+				super(pickerTui, theme, pickerKeys, { paddingX: EDITOR_PADDING });
 			}
 
 			render(width: number): string[] {
@@ -478,16 +490,11 @@ export default function (pi: ExtensionAPI) {
 				const pad = (line: string) => paintStaticMessage(
 					" " + truncateToWidth(line, innerWidth, "", true) + " ", background);
 				const completionLines = lines.slice(bottomIndex + 1);
-				const { line, col } = this.getCursor();
-				this.sessionCompletionCard = width >= 24 && completionLines.length > 0 &&
-					/(?:^|\s)\$[^\s$]*$/.test((this.getText().split("\n")[line] ?? "").slice(0, col));
-				this.completionBodyRows = completionLines.length;
-				const autocomplete = this.sessionCompletionCard
-					? renderSelectionCard({
-						width, theme, title: "引用其他会话", compact: true,
-						items: [], cursor: -1, bodyLines: completionLines,
-						hints: ["↑↓ 选择 · Enter 插入引用 · Esc 取消", "↑↓ 选择 · Enter 确认"],
-					})
+				const completion = mentionCompletionState(this);
+				this.sessionCompletionCard = !!completion;
+				const autocomplete = completion
+					? renderSessionPicker(width, this.pickerTui.terminal.rows, theme,
+						completion.labels, completion.cursor, mentionPickerOptions)
 					: completionLines.map((line) => " " + truncateToWidth(line, innerWidth, "", true) + " ");
 
 				this.renderedContentHeight = contentLines.length;
@@ -500,10 +507,9 @@ export default function (pi: ExtensionAPI) {
 				const bottomGap = this.renderedContentHeight + 3;
 				if (event.y === 0 || event.y === bottomGap) return undefined;
 				if (this.sessionCompletionCard && event.y > bottomGap) {
-					const bodyStart = bottomGap + 5;
-					if (event.y < bodyStart || event.y >= bodyStart + this.completionBodyRows) return undefined;
-					return super.handleMouse({ ...event, y: event.y - 5,
-						x: Math.max(0, event.x - 2), width: Math.max(1, event.width - 4) });
+					// Same keyboard-only contract as /mention; native list row coordinates
+					// no longer describe the shared card's viewport.
+					return undefined;
 				}
 				return super.handleMouse({
 					...event,

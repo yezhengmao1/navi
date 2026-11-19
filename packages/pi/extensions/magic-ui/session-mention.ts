@@ -7,8 +7,9 @@ import { dirname, join, resolve } from "node:path";
 import type { AutocompleteItem, AutocompleteProvider } from "@earendil-works/pi-tui";
 
 import { createSessionPicker } from "./herdr-fork/picker.js";
+import { mentionLabel, mentionSearchText, mentionPickerOptions } from "./mention-picker.js";
 import { showQuestionnaire } from "./questionnaire.js";
-import { ExternalSessionSources, sourceId, externalIdentity, externalLabel, formatSourceList, parseSourceArguments, type ExternalSession } from "./external-sessions.js";
+import { ExternalSessionSources, sourceId, externalIdentity, formatSourceList, parseSourceArguments, type ExternalSession } from "./external-sessions.js";
 
 const MAX_REFERENCES = 3;
 const mentionPattern = /(^|\s)\$session:([\w-]+)(?=$|\s|[，。！？,!?;；])/g;
@@ -70,15 +71,12 @@ export async function loadSessions(ctx: ExtensionContext, manager = SessionManag
 }
 
 async function pick(ctx: ExtensionContext, sessions: SessionInfo[], query = "") {
-  const filtered = sessions.filter(s => `${externalIdentity(s)} ${s.name ?? ""} ${s.firstMessage} ${s.cwd} ${s.id}`.toLowerCase().includes(query.toLowerCase()));
+  const filtered = sessions.filter(s => mentionSearchText(s).includes(query.toLowerCase()));
   if (!filtered.length) { ctx.ui.notify("没有匹配的其他会话", "info"); return; }
-  const labels = filtered.map(s => `${externalIdentity(s)} ${(s.name || s.firstMessage || "未命名").replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 80)} · ${s.cwd} · ${s.id}`);
+  const labels = filtered.map(mentionLabel);
   const selected = ctx.mode === "tui"
     ? await ctx.ui.custom<string | undefined>((tui, theme, _kb, done) =>
-      createSessionPicker(tui, theme, done, labels, {
-        title: "引用其他会话", scope: "全部项目",
-        enterHint: "Enter 插入路径引用 · Esc 取消 · 正文按需读取",
-      }))
+      createSessionPicker(tui, theme, done, labels, mentionPickerOptions))
     : await ctx.ui.select("引用会话文件（仅传路径，正文按需读取）", labels);
   return selected === undefined ? undefined : filtered[labels.indexOf(selected)];
 }
@@ -88,7 +86,6 @@ export function sessionAutocomplete(current: AutocompleteProvider, list: () => P
   // snapshots (and their search strings) be reclaimed instead of accumulating.
   const searchText = new WeakMap<SessionInfo, string>();
   const displayItems = new WeakMap<SessionInfo, AutocompleteItem>();
-  const clean = (text: string) => text.replace(/[\x00-\x1f\x7f-\x9f]/g, " ");
   const token = (lines: string[], line: number, col: number) =>
     lines[line]?.slice(0, col).match(/(?:^|\s)(\$[^\s$]*)$/)?.[1];
   return {
@@ -106,7 +103,7 @@ export function sessionAutocomplete(current: AutocompleteProvider, list: () => P
           if (query) {
             let text = searchText.get(session);
             if (text === undefined) {
-              text = `${externalIdentity(session)} ${session.name ?? ""} ${session.firstMessage} ${session.cwd} ${session.id}`.toLowerCase();
+              text = mentionSearchText(session);
               searchText.set(session, text);
             }
             if (!text.includes(query)) continue;
@@ -114,8 +111,7 @@ export function sessionAutocomplete(current: AutocompleteProvider, list: () => P
           let item = displayItems.get(session);
           if (!item) {
             item = { value: `$session:${session.id}`,
-              label: (externalLabel(session) ? `[${externalLabel(session)}] ` : "") + clean(session.name || session.firstMessage || "未命名").slice(0, 80),
-              description: clean(session.cwd) };
+              label: mentionLabel(session) };
             displayItems.set(session, item);
           }
           items.push(item);
@@ -277,10 +273,10 @@ export default function sessionMention(pi: ExtensionAPI, sources = new ExternalS
         cache.clear();
         sessions = await list(ctx);
       }
-      const selected = [...new Map(ids.map(id => { const s = resolveReference(sessions, id); return [s.path, s] as const; })).values()];
+      const references = [...new Map(ids.map(id => { const s = resolveReference(sessions, id); return [s.path, s] as const; })).values()];
       return {
         action: "transform",
-        text: `${text}\n\n${citeSessions(selected)}`,
+        text: `${text}\n\n${citeSessions(references)}`,
         images: event.images,
       };
     } catch (error) {

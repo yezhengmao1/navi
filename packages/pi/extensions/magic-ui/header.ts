@@ -121,6 +121,8 @@ export function extensionListAdapter(dim: (text: string) => string) {
 type BlockTiming = ReturnType<typeof import("./block-timing.js").default>;
 
 export default function (pi: ExtensionAPI, timing?: BlockTiming) {
+	let disposeHeader: (() => void) | undefined;
+	pi.on("session_shutdown", () => { disposeHeader?.(); disposeHeader = undefined; });
 	let resourcesDirty = true;
 	const markResourcesDirty = () => { resourcesDirty = true; };
 	pi.on("session_start", markResourcesDirty);
@@ -130,15 +132,25 @@ export default function (pi: ExtensionAPI, timing?: BlockTiming) {
 	pi.on("agent_end", markResourcesDirty);
 	pi.on("session_start", (_event, ctx) => {
 		if (ctx.mode !== "tui") return;
-		ctx.ui.setHeader((tui) => {
+		ctx.ui.setHeader((tui, factoryTheme) => {
+			disposeHeader?.();
+			let disposed = false;
 			timing?.mount(tui, ctx);
-			const lists = extensionListAdapter(text => ctx.ui.theme.fg("dim", text));
+			const lists = extensionListAdapter(text => factoryTheme.fg("dim", text));
 			let cached: { width: number; expanded: boolean; theme: unknown; lines: string[] } | undefined;
 			// Resource nodes can be attached after the factory/first layout finishes.
 			const startup = setTimeout(() => { resourcesDirty = true; tui.requestRender(); }, 0);
 			startup.unref();
+			const dispose = () => {
+				if (disposed) return;
+				disposed = true;
+				clearTimeout(startup); lists.dispose(); timing?.dispose();
+			};
+			disposeHeader = dispose;
 			return {
 				render(width: number): string[] {
+					// The old header may still be in a pending layout after shutdown.
+					if (disposed) return [];
 					timing?.update();
 					const expanded = ctx.ui.getToolsExpanded();
 					const theme = ctx.ui.theme;
@@ -172,7 +184,7 @@ export default function (pi: ExtensionAPI, timing?: BlockTiming) {
 					return lines;
 				},
 				invalidate() { cached = undefined; },
-				dispose() { clearTimeout(startup); lists.dispose(); timing?.dispose(); },
+				dispose,
 			};
 		});
 	});

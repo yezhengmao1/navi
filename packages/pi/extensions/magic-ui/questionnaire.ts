@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Key, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
+import { Key, matchesKey, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { renderSelectionCard } from "./editor-footer.js";
 import { Type } from "typebox";
 
@@ -81,7 +81,7 @@ export default function (pi: ExtensionAPI) {
 
 /** Shared command/tool UI; commands may supply up to 64 registered sources. */
 export async function showQuestionnaire(pi: ExtensionAPI, ctx: ExtensionContext,
-  params: { title: string; questions: QuestionSpec[]; submitLabel?: string }, signal?: AbortSignal): Promise<Result> {
+  params: { title: string; questions: QuestionSpec[]; submitLabel?: string; description?: string }, signal?: AbortSignal): Promise<Result> {
       const cancelled = (reason: string): Result => ({ cancelled: true, answers: {}, reason });
       validateQuestions(params.questions);
       if (ctx.mode !== "tui") return cancelled("UI 不可用；请在交互式终端运行或由用户明确提供文字答案");
@@ -164,6 +164,7 @@ export async function showQuestionnaire(pi: ExtensionAPI, ctx: ExtensionContext,
               ];
               const card = {
                 width, theme, title: params.title, compact: true,
+                bodyLines: params.description ? wrapTextWithAnsi(params.description, Math.max(1, width - 4)) : undefined,
                 subtitle: `${start + 1}–${start + visible.length} / ${items.length} · ${questions.length} 题`,
                 cursor: cursor < rows.length ? cursor - start : -1, items: visible, hints, warning,
                 actions: [

@@ -105,6 +105,21 @@ test('header caches layout and resource discovery; resize, expansion and theme c
   component.dispose();
 });
 
+test('shutdown makes retained headers inert before the context becomes stale', () => {
+  let component, stale = false;
+  const ui = { theme: themes.theme, getToolsExpanded: () => false,
+    setHeader(factory) { component = factory({ requestRender() {} }, this.theme); } };
+  const ctx = { mode: 'tui', get ui() { assert.equal(stale, false, 'stale ctx'); return ui; } };
+  const { emit } = harness(registerHeader);
+  emit('session_start', {}, ctx);
+  assert.ok(component.render(80).length);
+  emit('session_shutdown', {}, ctx);
+  stale = true;
+  component.invalidate();
+  assert.deepEqual(component.render(80), []);
+  assert.doesNotThrow(() => component.dispose());
+});
+
 test('footer renders cached context and invalidates it at session/model/message boundaries', async () => {
   const original = DailyTokenCounter.prototype.read;
   DailyTokenCounter.prototype.read = async () => 0;

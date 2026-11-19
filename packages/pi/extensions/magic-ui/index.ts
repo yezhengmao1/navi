@@ -38,10 +38,12 @@ export default function (pi: ExtensionAPI) {
   registerHeader(pi, {
     mount(tui, ctx) {
       dispose(); root = tui;
-      labelStyle = text => ctx.ui.theme.fg("dim", text);
+      // Keep render dependencies, not a session-bound context, in callbacks.
+      const theme = ctx.ui.theme;
+      labelStyle = text => theme.fg("dim", text);
       // Submitted messages are history: no animation or transcript refresh timer.
-      styleKey = () => staticMessageBackground(ctx.ui.theme) + labelStyle(" User");
-      paint = text => paintStaticMessage(text, staticMessageBackground(ctx.ui.theme));
+      styleKey = () => staticMessageBackground(theme) + labelStyle(" User");
+      paint = text => paintStaticMessage(text, staticMessageBackground(theme));
       timing.mount(tui, ctx); alignment.update(tui);
       // Resource factories may run before the transcript is attached.
       refresh.request(true);

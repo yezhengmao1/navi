@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { load } from './helpers.mjs';
 const { ExternalSessionSources, LIMITS } = await load('external-sessions');
+const { mentionLabel } = await load('mention-picker');
 const { addSessionSource, mergeSessions, sessionAutocomplete, citeSessions, default: register } = await load('session-mention');
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'codex-sources-'));
@@ -51,8 +52,8 @@ test('aliases persist per canonical source, update explicitly, and retain citati
   assert.equal(session.id, before.id); assert.equal(session.sourceId, before.sourceId);
   const provider = sessionAutocomplete({}, async () => [session]);
   const suggestions = await provider.getSuggestions(['$yxing02'], 0, 8, { signal: new AbortController().signal });
-  assert.equal(suggestions.items[0].label, '[Codex · yxing02] original');
-  assert.equal(suggestions.items[0].description, '/work');
+  assert.equal(suggestions.items[0].label, mentionLabel(session));
+  assert.match(suggestions.items[0].label, /Codex · yxing02.*original · \/work/);
   assert.equal(suggestions.items[0].value, `$session:${session.id}`);
   const citation = JSON.parse(citeSessions([session]).split('\n')[1]);
   assert.equal(citation.sourceName, 'yxing02'); assert.equal(citation.sourceId, before.sourceId);
@@ -92,9 +93,9 @@ test('multiple sources and Pi ID collisions remain individually addressable and 
   const provider = sessionAutocomplete({}, async () => merged);
   const result = await provider.getSuggestions(['$codex/external'], 0, 15, { signal: new AbortController().signal });
   assert.equal(result.items.length, 2);
-  assert.ok(result.items.every(i => i.label === '[Codex/external] same' && i.description === '/work'));
+  assert.ok(result.items.every(i => /Codex\/external.*same · \/work · /.test(i.label)));
   const all = await provider.getSuggestions(['$'], 0, 1, { signal: new AbortController().signal });
-  assert.ok(all.items.every(i => i.description === '/work'), 'native and external descriptions only show cwd');
+  assert.deepEqual(all.items.map(i => i.label), merged.map(mentionLabel), 'native and external rows match /mention labels');
   assert.equal(new Set(all.items.map(i => i.value)).size, 3, 'full IDs still distinguish same-path sessions');
   const citation = citeSessions(sessions);
   assert.match(citation, /"externalId":"same"/); assert.match(citation, /"sourceId"/);

@@ -138,8 +138,7 @@ export function cachedTimingRow() {
 export function blockTimingAdapter(clock: BlockClock, dim: (s: string) => string, now = () => performance.now(),
 	toolBackground: (text: string, node: any) => string = text => text) {
 	const restores = new Map<any, () => void>();
-	const decorated = new WeakSet<object>();
-	function decorate(node: any) {
+	function decorate(node: any, childrenRestores: Map<any, () => void>) {
 		const m = node.lastMessage;
 		if (!Array.isArray(m?.content) || !Array.isArray(node.contentContainer?.children)) return;
 		const children = node.contentContainer.children;
@@ -154,12 +153,13 @@ export function blockTimingAdapter(clock: BlockClock, dim: (s: string) => string
 			} else if (c.type !== "text" || !c.text?.trim()) continue;
 			const hidden = c.type === "thinking" && (node.thinkingVisibilityOverrides?.get(thinkingRun++) ?? node.hideThinkingBlock);
 			const child = children[cursor++];
-			if (child && typeof child.render === "function" && !decorated.has(child)) {
-				decorated.add(child);
+			if (child && typeof child.render === "function" && !childrenRestores.has(child)) {
 				const original = child.render;
 				const renderTimingRow = cachedTimingRow();
-				child.render = function (width: number) {
+				let active = true;
+				const wrapped = function (this: any, width: number) {
 					const lines = original.call(this, width);
+					if (!active) return lines;
 					const ms = clock.elapsed(messageKey(m), indices, now());
 					if (!lines.length) return lines;
 					const label = ms === undefined ? "" : durationLabel(ms);
@@ -170,6 +170,11 @@ export function blockTimingAdapter(clock: BlockClock, dim: (s: string) => string
 					}
 					return [renderTimingRow(dim(c.type === "thinking" ? " Thinking" : " Output"), label, width, dim), ...lines];
 				};
+				child.render = wrapped;
+				childrenRestores.set(child, () => {
+					active = false;
+					if (child.render === wrapped) child.render = original;
+				});
 			}
 			if (c.type === "thinking" && m.content.slice(i + 1).some((v: any) => v.type === "text" && v.text?.trim() || v.type === "thinking" && v.thinking?.trim())) cursor++;
 		}
@@ -185,10 +190,20 @@ export function blockTimingAdapter(clock: BlockClock, dim: (s: string) => string
 				if (node.lastMessage?.role === "assistant" && typeof node.updateContent === "function" && node.contentContainer?.children) {
 					if (!restores.has(node)) {
 						const original = node.updateContent;
-						const wrapped = function (this: any, ...args: any[]) { original.apply(this, args); decorate(this); };
+						const childrenRestores = new Map<any, () => void>();
+						const restoreChildren = () => {
+							for (const restore of childrenRestores.values()) restore();
+							childrenRestores.clear();
+						};
+						const wrapped = function (this: any, ...args: any[]) {
+							restoreChildren(); original.apply(this, args); decorate(this, childrenRestores);
+						};
 						node.updateContent = wrapped;
-						restores.set(node, () => { if (node.updateContent === wrapped) { node.updateContent = original; original.call(node, node.lastMessage); } });
-						decorate(node);
+						restores.set(node, () => {
+							restoreChildren();
+							if (node.updateContent === wrapped) { node.updateContent = original; original.call(node, node.lastMessage); }
+						});
+						decorate(node, childrenRestores);
 					}
 					// Already mounted nodes are decorated by their updateContent wrapper.
 					// Do not rescan historical content blocks at every tool/message boundary.
@@ -303,8 +318,10 @@ export default function registerBlockTiming(pi: ExtensionAPI) {
 	return {
 		mount(tui: unknown, ctx: ExtensionContext) {
 			refresh.reset(); adapter?.dispose(); root = tui;
-			adapter = blockTimingAdapter(clock, text => ctx.ui.theme.fg("dim", text), () => performance.now(),
-				(text, node) => node.getRenderShell?.() === "self" ? text : ctx.ui.theme.bg(
+			// Render callbacks can outlive the session context during replacement.
+			const theme = ctx.ui.theme;
+			adapter = blockTimingAdapter(clock, text => theme.fg("dim", text), () => performance.now(),
+				(text, node) => node.getRenderShell?.() === "self" ? text : theme.bg(
 					node.isPartial ? "toolPendingBg" : node.result?.isError ? "toolErrorBg" : "toolSuccessBg", text));
 			adapter.update(root);
 			redraw();
