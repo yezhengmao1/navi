@@ -144,7 +144,8 @@ async function locked(dir, action, { lockTimeoutMs = 2000 } = {}) {
   for (;;) {
     try { await mkdir(lock, { mode: 0o700 }); break; } catch (error) {
       if (error.code !== 'EEXIST') throw error;
-      await directory(lock);
+      // Its owner may have released the lock between mkdir and lstat.
+      try { await directory(lock); } catch (statError) { if (statError.code !== 'ENOENT') throw statError; }
       if (performance.now() >= deadline) throw new Error('Review store lock acquisition timed out; lock was not stolen');
       await delay(Math.min(20, Math.max(1, deadline - performance.now())));
     }
