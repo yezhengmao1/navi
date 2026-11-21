@@ -4,15 +4,23 @@ import { load, tui } from './helpers.mjs';
 const { default: register, validateQuestions } = await load('questionnaire');
 let tool;
 let renderer;
-register({ registerTool(t) { tool = t; }, events: { emit(_name, card) { renderer?.(card); } } });
+const blocked = [];
+register({ registerTool(t) { tool = t; }, events: { emit(name, data) {
+  if (name === 'herdr:blocked') blocked.push(data);
+  if (name === 'magic-ui:selection-card') renderer?.(data);
+} } });
 const multi = { id: 'colors', prompt: '颜色', type: 'multiple', min: 1,
   options: [{ value: 'red', label: '红' }, { value: 'blue', label: '蓝' }], default: ['red'] };
 const down = '\x1b[B', enter = '\r';
 async function run(questions, keys, { mode = 'tui', abort = false, preAbort = false } = {}) {
+  blocked.length = 0;
   const controller = new AbortController();
   if (preAbort) controller.abort();
   let frame;
-  const ctx = { mode, ui: { custom: factory => new Promise((resolve, reject) => {
+  const active = { active: true, label: '等待填写问卷' };
+  const ctx = { mode, ui: { custom: (factory, options) => new Promise((resolve, reject) => {
+    assert.deepEqual(blocked, [active]);
+    assert.deepEqual(options.blocked, { kind: 'question', message: active.label });
     let finished = false;
     const component = factory({ requestRender() {} }, { fg: (_c, s) => s, bg: (_c, s) => s, bold: s => s }, {}, v => { finished = true; resolve(v); });
     for (const width of [0, 1, 12, 40, 100]) {
@@ -25,6 +33,7 @@ async function run(questions, keys, { mode = 'tui', abort = false, preAbort = fa
     if (!finished) reject(new Error(`Test did not complete: ${frame}`));
   }) } };
   const r = await tool.execute('test', { title: '通用问卷', questions }, controller.signal, undefined, ctx);
+  assert.deepEqual(blocked, mode === 'tui' && !preAbort ? [active, { active: false }] : []);
   assert.deepEqual(JSON.parse(r.content[0].text), r.details);
   return r.details;
 }
@@ -63,6 +72,12 @@ test('non-TUI never treats defaults as consent', async () => {
     const r = await run([multi], [], { mode });
     assert.equal(r.cancelled, true); assert.deepEqual(r.answers, {});
   }
+});
+test('a failing custom dialog releases its Herdr blocked state', async () => {
+  blocked.length = 0;
+  const ctx = { mode: 'tui', ui: { custom() { throw new Error('cannot open'); } } };
+  await assert.rejects(tool.execute('test', { title: 'private title', questions: [multi] }, undefined, undefined, ctx), /cannot open/);
+  assert.deepEqual(blocked, [{ active: true, label: '等待填写问卷' }, { active: false }]);
 });
 test('reject invalid IDs, options, defaults, counts', () => {
   for (const qs of [[], [multi, multi], [{ ...multi, default: ['bad'] }],

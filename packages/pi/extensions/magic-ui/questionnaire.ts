@@ -87,7 +87,9 @@ export async function showQuestionnaire(pi: ExtensionAPI, ctx: ExtensionContext,
       if (ctx.mode !== "tui") return cancelled("UI 不可用；请在交互式终端运行或由用户明确提供文字答案");
       if (signal?.aborted) return cancelled("操作已中止");
 
-      return await ctx.ui.custom<Result>((tui, theme, _kb, done) => {
+      // The status may be visible outside this pane; don't include question text or paths.
+      const label = "等待填写问卷";
+      const open = () => ctx.ui.custom<Result>((tui, theme, _kb, done) => {
         const questions = params.questions;
         const answers = new Map<string, Answer>();
         const rows: { question: number; option?: string; label: string; group?: string }[] = [];
@@ -206,5 +208,9 @@ export async function showQuestionnaire(pi: ExtensionAPI, ctx: ExtensionContext,
           },
           dispose() { signal?.removeEventListener("abort", abort); },
         };
-      });
+      }, { blocked: { kind: "question", message: label } });
+
+      pi.events.emit("herdr:blocked", { active: true, label });
+      try { return await open(); }
+      finally { pi.events.emit("herdr:blocked", { active: false }); }
 }
