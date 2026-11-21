@@ -5,6 +5,7 @@ The extension set is grouped by responsibility:
 | Group | Files | Purpose |
 | --- | --- | --- |
 | UI | `magic-ui/index.ts` | Single entry point for all UI modules below |
+| Delegation | `magic-relay/index.ts` | `/relay` and `magic_relay`: delegate to agy over ACP and wake the originating Pi session with the result |
 | Safety | `safety-guard.ts` | Review heavy/destructive commands, confirm sensitive writes and `/clear`, and collect rejection feedback |
 
 See [package setup](../README.md) for installation and migration. The optional legacy `install-extensions.sh` removes listed legacy extensions; native package installation does not. Run the following test commands from the package directory (`packages/pi/`), not this `extensions/` directory.
