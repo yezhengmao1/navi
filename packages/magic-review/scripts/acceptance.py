@@ -45,14 +45,14 @@ def run(name):
     request = {'kind': kind, 'target': target, 'budget': {'maxCalls': 6, 'maxTokens': 100000, 'timeoutMs': 240000}}
     prompt = ('Execute this plugin acceptance scenario. Do not edit or execute fixture source, do not load skills. '
               'Call magic_review_prepare with ' + json.dumps(request) + '. Then call magic_review_run with its returned ID and backend=' + backend + '. '
-              'Team backend is explicitly authorized for this acceptance test. After completion, only summarize actual state and report paths. '
+              'Use only the requested backend; magic_review_run handles all delegation. After completion, only summarize actual state and report paths. '
               'If any call fails, report it and stop; do not retry or fabricate findings.')
     command = ['pi', '--offline', '--no-mcp', '--no-context-files', '--no-skills', '--no-extensions', '--no-session', '--approve',
                '-e', str(package / 'extensions/magic-review.ts'), '--mode', 'json', '--print']
     tools = ['magic_review_prepare', 'magic_review_run']
     if backend == 'team':
-        command += ['-e', str(repo / '.pi/extensions/agent-team/index.ts')]
-        tools += ['team', 'subagent']
+        command += ['-e', str(repo / '.pi/extensions/subagent/index.ts')]
+        tools.append('subagent')
     command += ['--tools', ','.join(tools), prompt]
     process = subprocess.Popen(command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
     timed_out = False
@@ -67,10 +67,12 @@ def run(name):
     runs = []
     for file in (cwd / '.local/magic-review').glob('*/run.json'):
         state = json.loads(file.read_text())
-        runs.append({k: state.get(k) for k in ['id', 'state', 'calls', 'usage', 'reportPaths', 'error']})
+        runs.append({k: state.get(k) for k in ['id', 'state', 'backend', 'calls', 'usage', 'reportPaths', 'error']})
         runs[-1]['confirmed'] = sum(f.get('verificationDecision') == 'confirmed' for f in state.get('findings', []))
     result = {'scenario': name, 'cwd': str(cwd), 'exit': process.returncode, 'timeout': timed_out, 'runs': runs,
-              'passed': not timed_out and process.returncode == 0 and len(runs) == 1 and runs[0]['state'] == 'completed' and (runs[0]['confirmed'] >= 2 if name == 'paper' else runs[0]['confirmed'] == 1)}
+              'passed': not timed_out and process.returncode == 0 and len(runs) == 1 and runs[0]['state'] == 'completed'
+              and runs[0]['backend'] == backend and runs[0]['calls'] == (4 if backend == 'team' else 2)
+              and (runs[0]['confirmed'] >= 2 if name == 'paper' else runs[0]['confirmed'] == 1)}
     return result
 
 names = (['code', 'paper'] + (['team'] if args.team else [])) if args.scenario == 'all' else [args.scenario]

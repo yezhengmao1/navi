@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { browseReview, reviewWidget } from './browser.js';
 import { showConfirmation } from '../../pi/extensions/magic-ui/confirmation.js';
 import { selectCard, inputCard } from '../../pi/extensions/magic-ui/dialogs.js';
-import { modelInvoker, teamInvoker, sumUsage } from './invoke.js';
+import { modelInvoker, subagentInvoker, sumUsage } from './invoke.js';
 
 const skillPath = (kind: string) => fileURLToPath(new URL(`../skills/magic-review-${kind}/SKILL.md`, import.meta.url));
 const result = (data: any, extra: any = {}) => ({ content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }], details: data, ...extra });
@@ -47,7 +47,7 @@ export default async function magicReview(pi: ExtensionAPI) {
     if (event.source === 'extension') return { action: 'continue' };
     const route = routeReview(event.text);
     if (!route) return { action: 'continue' };
-    return { action: 'transform', text: `[magic-review routed]\nRead ${skillPath(route.kind)}. Use magic_review_prepare then magic_review_run, not manual report submission. Clarify ambiguous scope. ${route.team ? 'User requests team backend; pass backend=team to magic_review_run.' : 'Default backend=model; do not create team workers without authorization.'}\nOriginal user request:\n${event.text}`, images: event.images };
+    return { action: 'transform', text: `[magic-review routed]\nRead ${skillPath(route.kind)}. Use magic_review_prepare then magic_review_run, not manual report submission. Clarify ambiguous scope. ${route.team ? 'User requests delegated review; pass backend=team to magic_review_run.' : 'Default backend=model; do not delegate without authorization.'}\nOriginal user request:\n${event.text}`, images: event.images };
   });
   pi.on('session_shutdown', async () => { for (const controller of active.values()) controller.abort(new Error('Session shutdown')); active.clear(); });
   pi.on('session_start', async (_event, ctx) => {
@@ -121,8 +121,9 @@ export default async function magicReview(pi: ExtensionAPI) {
 
   pi.registerTool({
     name: 'magic_review_run', label: 'Magic Review · discover → verify', exposure: 'model-only',
-    reachesTools: (args: any) => args.backend === 'team' ? ['team'] : [],
-    description: 'Run durable bounded discovery plus a separate mandatory verifier, export only confirmed findings. Default backend=model makes tool-free model calls; backend=team uses existing background team workers with read-only tool selection and requires explicit user request. Cancellation propagates; uncertain interrupted calls are never replayed.',
+    // An omitted backend can inherit a persisted delegated run on resume/recheck.
+    reachesTools: (args: any) => args.backend === 'model' ? [] : ['subagent'],
+    description: 'Run durable bounded discovery plus a separate mandatory verifier, export only confirmed findings. Default backend=model makes tool-free model calls; backend=team calls subagent directly with read-only tool selection and requires explicit user request. Cancellation propagates; uncertain interrupted calls are never replayed.',
     parameters: Type.Object({ id: Type.String(), backend: Type.Optional(Type.Union([Type.Literal('model'), Type.Literal('team')])), recheckFindingId: Type.Optional(Type.String()) }),
     async execute(_toolId, params, signal, onUpdate, ctx) {
       if (active.has(params.id)) throw new Error('This review already has active workers');
@@ -146,7 +147,7 @@ export default async function magicReview(pi: ExtensionAPI) {
           images = visual.images; evidence.visualCoverage = visual.coverage;
         } else evidence.visualCoverage = { supplied: [], limitations: ['Selected backend/model does not receive images; figures not visually inspected.'] };
       }
-      const invoke = backend === 'team' ? teamInvoker(ctx) : modelInvoker(ctx, records, images);
+      const invoke = backend === 'team' ? subagentInvoker(ctx) : modelInvoker(ctx, records, images);
         run = await updateRun(ctx.cwd, run.id, (draft: any) => {
           if (draft.backend && draft.backend !== backend) throw new Error('Another invocation bound a different backend; prepare a fresh run');
           if (['running', 'verifying', 'interrupted'].includes(draft.state)) throw new Error('Run acquired by another process; no ownership change performed');

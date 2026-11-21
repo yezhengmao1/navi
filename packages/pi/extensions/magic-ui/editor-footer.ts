@@ -34,7 +34,7 @@ import {
 } from "@earendil-works/pi-tui";
 
 import { renderSelectionCard, type MagicSelectionCard } from "./selection-card.js";
-import { renderSessionPicker, sessionPickerCursor } from "./herdr-fork/picker.js";
+import { renderSessionPicker, sessionPickerCursor } from "./session-picker.js";
 import { mentionCompletionState, mentionPickerOptions } from "./mention-picker.js";
 export { renderSelectionCard, type MagicSelectionCard } from "./selection-card.js";
 

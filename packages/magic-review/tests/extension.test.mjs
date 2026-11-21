@@ -49,6 +49,49 @@ test('managed prepare/run enforces independent call and returns report; manual e
   assert.match(await readFile(manual.details.markdownPath, 'utf8'), /independent verification not performed/);
 });
 
+test('backend=team requires subagent, then runs three tracks and a separate verifier without team', async t => {
+  const { tools, dir } = await load(t);
+  const run = tools.get('magic_review_run');
+  assert.deepEqual(run.reachesTools({ backend: 'team' }), ['subagent']);
+  assert.deepEqual(run.reachesTools({ backend: 'model' }), []);
+  assert.deepEqual(run.reachesTools({}), ['subagent']); // resume can inherit backend=team
+  const calls = [];
+  const ctx = { cwd: dir, tools: [{ name: 'team' }], async executeTool(name, args, { signal }) {
+    assert.equal(name, 'subagent');
+    assert.ok(signal instanceof AbortSignal);
+    assert.deepEqual(Object.keys(args).sort(), ['agent', 'agentScope', 'cwd', 'definitions', 'task']);
+    assert.equal(args.cwd, dir);
+    assert.equal(args.agentScope, 'user');
+    assert.equal(args.definitions.length, 1);
+    const [definition] = args.definitions;
+    assert.equal(definition.name, args.agent);
+    assert.deepEqual(definition.tools, ['read']);
+    assert.match(args.task, /main\.tex/);
+    const verifying = definition.instructions.includes('magic-review verify worker');
+    if (verifying) assert.equal(calls.length, 3);
+    else assert.match(definition.instructions, /magic-review discover worker/);
+    calls.push(args.agent);
+    const text = verifying ? '{"verdicts":[],"summary":"Verified"}' : '{"findings":[],"reviewed":["main.tex"],"limitations":[]}';
+    const worker = { exitCode: 0, messages: [{ role: 'assistant', content: [{ type: 'text', text }] }],
+      usage: { input: 2, output: 3, cacheRead: 4, cacheWrite: 1, cost: 0 } };
+    return { isError: false, result: { details: { mode: 'single', results: [worker] } } };
+  } };
+  await writeFile(path.join(dir, 'main.tex'), '\\section{Test}');
+  const prepared = await tools.get('magic_review_prepare').execute('p', { kind: 'paper', target: 'main.tex' }, undefined, undefined, ctx);
+  const args = { id: prepared.details.id, backend: 'team' };
+  const missing = await run.execute('r1', args, undefined, undefined, ctx);
+  assert.equal(missing.isError, true);
+  assert.match(missing.details.error, /requires the subagent tool/);
+  assert.equal(calls.length, 0);
+  ctx.tools = [{ name: 'subagent' }];
+  const completed = await run.execute('r2', args, undefined, undefined, ctx);
+  assert.equal(completed.details.state, 'completed', completed.details.error);
+  assert.equal(calls.length, 4);
+  assert.equal(new Set(calls).size, 4);
+  assert.equal(completed.details.summary, 'Verified');
+  assert.equal(completed.details.usage.totalTokens, 40);
+});
+
 test('missing library exports fail at startup with an actionable error', async t => {
   await assert.rejects(load(t, true), /Magic Review: missing function export collectCode.*same package revision/);
 });

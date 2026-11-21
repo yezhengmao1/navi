@@ -10,7 +10,7 @@ pi install ./packages/magic-review
 
 Install from this repository checkout, keeping the sibling `packages/pi` directory: confirmation, selection and input cards share its UI primitives (the Pi UI extension itself need not be enabled). Explicit execution/network approvals remain per-operation, default-deny; RPC keeps its native dialog protocol.
 
-Already installed local packages load in place. Run `/reload`; existing team members need reload/restart. Host Pi supplies peer packages; no npm dependencies need installing.
+Already installed local packages load in place. Run `/reload` to load changes. Host Pi supplies peer packages; no npm dependencies need installing.
 
 ## Entry points
 
@@ -52,7 +52,7 @@ Long evidence strings use `{encoding:"concatenate-chunks",chunks:[...]}` so line
 
 ### Images and reference metadata
 
-For an image-capable model backend, up to four PNG/JPEG/WebP assets (2 MiB aggregate) are attached after signature, containment and full snapshot-hash checks. File order is listed in visualCoverage. Changed, unsupported and partial-hash assets are excluded with reasons. Team workers currently receive text only. PDF/SVG/EPS conversion is **not implemented**; no claim of final layout inspection is made without supplied images.
+For an image-capable model backend, up to four PNG/JPEG/WebP assets (2 MiB aggregate) are attached after signature, containment and full snapshot-hash checks. File order is listed in visualCoverage. Changed, unsupported and partial-hash assets are excluded with reasons. Subagents receive text only. PDF/SVG/EPS conversion is **not implemented**; no claim of final layout inspection is made without supplied images.
 
 `magic_review_references` requests explicit interactive authorization to query literal bibliography DOI identifiers against HTTPS Crossref. Redirects, oversized responses and timeouts are bounded. Metadata availability does not establish citation relevance, novelty or scientific truth. Reference audit is saved separately, not silently injected into an existing immutable review.
 
@@ -70,19 +70,19 @@ Default list shows confirmed findings. Human triage is separate from verificatio
 
 The widget shows stage, calls, tokens, recorded cost and elapsed time when stage updates arrive. Stored Markdown reports are immutable revisions; later triage is authoritative in `run.json`/the browser rather than rewriting prior report history.
 
-## Team execution
+## Delegated review
 
-`backend=team` / `--team` directly invokes the existing `team run backend=background` tool: up to three discovery tracks, then a verifier. It does not create Herdr panes or disturb an existing persistent team's members. Results are persisted, schema-checked and consolidated; failures cancel siblings and wait for settlement.
+`--team` and `backend=team` retain their names for compatibility. This mode calls `subagent` directly for each of three discovery tracks and once more for independent verification. Enable the `subagent` tool from `.pi/extensions/subagent/index.ts`; the `team` tool is not needed. If `subagent` is unavailable the run fails explicitly, without switching backends. Results are persisted, schema-checked and consolidated; failures cancel siblings and wait for settlement.
 
-Normal persistent team members can themselves load this package and use `backend=model`. They must not recursively spawn reviewer teams. See [skills/team.md](skills/team.md).
+Workers receive the evidence in their tasks and must not delegate further. See [delegated review](skills/team.md).
 
-**Budget boundary:** defaults are 8 managed invocations, 400,000 estimated tokens and 10 minutes. Invocation count and deadline are enforced by the engine. Token reservations are conservative estimates, with usage reconciled after responses—not a guaranteed remote billing ceiling. Existing external team agents can make multiple model turns and do not expose a hard output/turn cap through their API. Therefore `maxCalls` is **worker invocation count**, not external model-turn count; the team backend's token cap is advisory/accounting, not a hard pre-spend limit. The tool-free model backend has an explicit per-response output cap. Team workers receive a read-only tool selection, which is not an OS sandbox.
+**Budget boundary:** defaults are 8 managed invocations, 400,000 estimated tokens and 10 minutes. Invocation count and deadline are enforced by the engine. Token reservations are conservative estimates, with usage reconciled after responses—not a guaranteed remote billing ceiling. Subagents can make multiple model turns and do not expose a hard output/turn cap through their API. Therefore `maxCalls` is **worker invocation count**, not external model-turn count; the delegated backend's token cap is advisory/accounting, not a hard pre-spend limit. The tool-free model backend has an explicit per-response output cap. Subagents receive a read-only tool selection, which is not an OS sandbox.
 
 ## Cancellation, recovery and persistence
 
 Store updates use bounded mkdir locks, atomic replacements and schema validation. Competing starts reject without revoking a live owner. Locks are not silently stolen. Reload/startup never starts paid work.
 
-Cancel propagates an abort signal to owned model/team invocations and waits for settlement. A submitted call without a known response is **uncertain**, even if cancellation was requested: it might have executed remotely. Such runs require inspection and a fresh run, never automatic replay. Known failed runs can reuse completed discovery only with identical evidence/settings. Another process's live run is not stopped or adopted by this extension. Artifacts persist across sessions; they are not an OS-security boundary against a malicious same-user process.
+Cancel propagates an abort signal to owned model or subagent invocations and waits for settlement. A submitted call without a known response is **uncertain**, even if cancellation was requested: it might have executed remotely. Such runs require inspection and a fresh run, never automatic replay. Known failed runs can reuse completed discovery only with identical evidence/settings. Another process's live run is not stopped or adopted by this extension. Artifacts persist across sessions; they are not an OS-security boundary against a malicious same-user process.
 
 ## Isolated tests / TeX compilation
 
@@ -110,6 +110,6 @@ python scripts/acceptance.py --live --scenario team
 
 Tests cover Git history/ranges/configuration, TeX confinement and observations, FIFO/byte limits, concurrent store and engine ownership, cancellation uncertainty, verification gates, semantic duplicate links, context packing, image hashes, mocked DOI requests, UI navigation/width/control sanitization, command routing and extension integration.
 
-Live acceptance passed for a deliberately defective commit, a deliberately flawed TeX paper, and the real background team integration. The team acceptance exposed duplicate root-cause reports; the verifier contract was strengthened and rerun successfully with one canonical finding. See [ACCEPTANCE.md](ACCEPTANCE.md) for evidence paths and limitations. UI tests are automated component tests, not a claim of manual coverage on every terminal.
+See [ACCEPTANCE.md](ACCEPTANCE.md) for historical live results and their limitations. Those results predate direct `subagent` dispatch. UI tests are automated component tests, not a claim of manual coverage on every terminal.
 
 Research sources and adopted/rejected methods: [RESEARCH.md](RESEARCH.md).

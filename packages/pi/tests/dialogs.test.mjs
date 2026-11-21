@@ -47,17 +47,14 @@ test('RPC uses supported native dialogs, headless never prompts', async () => {
  assert.equal(await selectCard({ hasUI: false }, 'type', ['code']), undefined);
 });
 
-test('ordinary permission uses marked relay; explicit authorization never auto-approves', async () => {
- let relayed = 0, prompted = 0;
- const confirm = async () => { relayed++; return true; };
- Object.defineProperty(confirm, Symbol.for('navi.team-confirm-relay'), { value: true });
+test('TUI permissions require a decision in the current session', async () => {
+ let prompted = 0;
  const ctx = { hasUI: true, mode: 'tui', ui: {
-  confirm, custom: async () => { prompted++; return { allow: false }; },
+  confirm: () => assert.fail('TUI permissions must use the local card'),
+  custom: async () => ({ allow: ++prompted === 2 }),
  } };
+ assert.equal(await confirmPermission(ctx, 'Trust agent', 'body'), false);
  assert.equal(await confirmPermission(ctx, 'Trust agent', 'body'), true);
- assert.deepEqual(await showConfirmation(ctx, 'Execute once', 'body'), { allow: false });
- assert.equal(relayed, 1);
- assert.equal(prompted, 1);
 });
 
 test('RPC late consent after abort cannot authorize', async () => {

@@ -34,7 +34,6 @@ import { Type } from "typebox";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.ts";
 import { SubagentStatus } from "./status.ts";
 import { registerScheduler } from "./scheduler.ts";
-import { registerPanes } from "./panes.ts";
 import { appendTail, BoundedLines, boundedText, finalAssistantText } from "./output.ts";
 
 const MAX_PARALLEL_TASKS = 8;
@@ -484,7 +483,6 @@ const SubagentParams = Type.Object({
 });
 
 export default function (pi: ExtensionAPI) {
-	registerPanes(pi);
 	registerScheduler(pi, async (agent, task, ctx, signal) => {
 		const result = await runSingleAgent(ctx.cwd, {
 			model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
@@ -508,7 +506,7 @@ export default function (pi: ExtensionAPI) {
 		description: [
 			"Delegate tasks to specialized subagents with isolated context.",
 			"Modes: single (agent + task), parallel (tasks array), chain (sequential with {previous} placeholder).",
-			"Optional definitions [{name, instructions, model?, tools?}] create dynamic task-specific agents without role files. Use team instead for persistent interactive Herdr panes.",
+			"Optional definitions [{name, instructions, model?, tools?}] create dynamic task-specific agents without role files.",
 			`Default agent scope is "user" (from ${path.join(getAgentDir(), "agents")}).`,
 			`To enable project-local agents in ${CONFIG_DIR_NAME}/agents, set agentScope: "both" (or "project").`,
 		].join(" "),

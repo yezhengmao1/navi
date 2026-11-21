@@ -110,7 +110,7 @@ for (const [name, confirmKeys, removes] of [
 }
 
 test('direct source picker scrolls 64 entries and remains bounded after resize', async () => {
-  const { createSessionPicker } = await load('herdr-fork/picker');
+  const { createSessionPicker } = await load('session-picker');
   const terminal = { rows: 24 }, results = [];
   const labels = Array.from({ length: 64 }, (_, i) => `来源-${i}`);
   const view = createSessionPicker({ terminal, requestRender() {} }, theme,

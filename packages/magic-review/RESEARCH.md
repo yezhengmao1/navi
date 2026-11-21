@@ -13,7 +13,7 @@ Important source discrepancy: Anthropic's fetched README describes numerical con
 
 ## Synthesis
 
-Scope and coverage → evidence collection → focused review → challenge candidates → deduplicate → structured report. Team coordination remains model-mediated through the existing team tool; this package does not implement its own agent runner. The scientific claim–evidence ledger is our synthesis, not a schema directly supplied by AI Scientist.
+Scope and coverage → evidence collection → focused review → challenge candidates → deduplicate → structured report. Delegated review uses direct, single-worker calls to the existing `subagent` tool; this package does not implement its own agent runner. The scientific claim–evidence ledger is our synthesis, not a schema directly supplied by AI Scientist.
 
 ## Limits
 

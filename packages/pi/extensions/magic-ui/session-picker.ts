@@ -1,5 +1,5 @@
 import { matchesKey } from '@earendil-works/pi-tui';
-import { renderSelectionCard } from '../selection-card.js';
+import { renderSelectionCard } from './selection-card.js';
 
 export type SessionPickerOptions = { title?: string; scope?: string; enterHint?: string; itemNoun?: string };
 
@@ -12,18 +12,19 @@ export function sessionPickerCursor(data: string, cursor: number, count: number)
 export function renderSessionPicker(width: number, rows: number, theme: any, labels: string[], cursor: number, options: SessionPickerOptions = {}) {
   const height = Math.max(1, Math.min(8, (rows || 24) - 10));
   const start = Math.max(0, Math.min(cursor - Math.floor(height / 2), labels.length - height));
+  const enterHint = options.enterHint ?? 'Enter 确认 · Esc 取消';
   return renderSelectionCard({
     width, theme, compact: true,
-    title: options.title ?? '复制会话到新分屏',
+    title: options.title ?? '选择会话',
     subtitle: `${options.scope ?? '当前项目'} · ${labels.length} 个${options.itemNoun ?? '会话'} · ${labels.length ? cursor + 1 : 0}/${labels.length}`,
     items: labels.slice(start, start + height).map(label => ({ label })),
     cursor: cursor - start,
     warning: labels.length ? undefined : '没有可选择的会话',
-    hints: [`↑↓ 选择 · ${options.enterHint ?? 'Enter 创建分屏 · Esc 取消'}`, options.enterHint ?? 'Enter 创建分屏 · Esc 取消'],
+    hints: [`↑↓ 选择 · ${enterHint}`, enterHint],
   });
 }
 
-/** Keyboard-only session card. Navigation never creates a pane until Enter. */
+/** Keyboard-only session card. Arrow keys navigate; Enter submits the selected item. */
 export function createSessionPicker(tui: any, theme: any, done: (value?: string) => void, labels: string[], options: SessionPickerOptions = {}) {
   let cursor = 0;
   let finished = false;

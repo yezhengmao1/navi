@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { load, tui } from './helpers.mjs';
-const { createSessionPicker } = await load('herdr-fork/picker');
+const { createSessionPicker } = await load('session-picker');
 const theme = { bold: text => text, fg: (_color, text) => text, bg: (_color, text) => text };
 const host = () => ({ terminal: { rows: 24 }, requestRender() {} });
 

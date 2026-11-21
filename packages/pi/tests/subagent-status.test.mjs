@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { load } from './helpers.mjs';
-const { SubagentStatus } = await load('../../../../.pi/extensions/agent-team/status');
+const { SubagentStatus } = await load('../../../../.pi/extensions/subagent/status');
 
 test('independent rows, queued/running/terminal states and next batch reset', () => {
   const status = new SubagentStatus();
@@ -72,7 +72,7 @@ test('finished status auto-hides; a new batch cancels the previous timer', async
 });
 
 test('subagent call headings use Chinese for mode and configuration scope', async () => {
-  const { default: register } = await load('../../../../.pi/extensions/agent-team/index');
+  const { default: register } = await load('../../../../.pi/extensions/subagent/index');
   let tool;
   register({ events: { emit() {} }, registerCommand() {}, on() {}, registerTool: value => { tool = value; } });
   const theme = { fg: (_color, text) => text, bold: text => text };
@@ -87,7 +87,7 @@ test('subagent call headings use Chinese for mode and configuration scope', asyn
 });
 
 test('extension loads and registers status reset hooks', async () => {
-  const { default: register } = await load('../../../../.pi/extensions/agent-team/index');
+  const { default: register } = await load('../../../../.pi/extensions/subagent/index');
   const events = new Map();
   let tool;
   register({ events: { emit() {} }, registerCommand() {}, on: (name, fn) => events.set(name, fn), registerTool: value => { tool = value; } });

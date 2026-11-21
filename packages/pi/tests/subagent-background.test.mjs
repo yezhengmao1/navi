@@ -1,0 +1,36 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { load } from './helpers.mjs';
+test('dynamic background definitions execute without role files; parallel/chain remain compatible', async t => {
+  const { default: register } = await load('../../../../.pi/extensions/subagent/index');
+  const tools = new Map();
+  const pi = { registerTool(tool) { tools.set(tool.name, tool); }, registerCommand() {}, on() {}, events: { emit() {} } };
+  register(pi);
+  assert.deepEqual([...tools.keys()].sort(), ['subagent', 'subagent_schedule']);
+  const dir = mkdtempSync(join(tmpdir(), 'pi-dynamic-agent-'));
+  const script = join(dir, 'child.cjs');
+  const oldScript = process.argv[1];
+  t.after(() => { process.argv[1] = oldScript; rmSync(dir, { recursive: true, force: true }); });
+  writeFileSync(script, `
+    const fs = require('node:fs');
+    const args = process.argv.slice(2);
+    const prompt = fs.readFileSync(args[args.indexOf('--append-system-prompt') + 1], 'utf8');
+    console.log(JSON.stringify({type:'message_end', message:{role:'assistant', content:[{type:'text', text:prompt + '\\n' + args.at(-1)}], stopReason:'stop'}}));
+  `);
+  process.argv[1] = script;
+  const tool = tools.get('subagent');
+  const ctx = { cwd: dir, mode: 'json', hasUI: false, ui: {} };
+  const invoke = p => tool.execute('dynamic', p, undefined, undefined, ctx);
+  const definitions = [{ name: 'metric-a', instructions: 'Analyze A' }, { name: 'metric-b', instructions: 'Analyze B' }];
+  const single = await invoke({ definitions, agent: 'metric-a', task: 'Inspect data' });
+  assert.match(single.content[0].text, /Analyze A/);
+  const parallel = await invoke({ definitions, tasks: definitions.map(d => ({ agent: d.name, task: 'Inspect' })) });
+  assert.equal(parallel.details.results.length, 2);
+  const chain = await invoke({ definitions, chain: [{ agent: 'metric-a', task: 'First' }, { agent: 'metric-b', task: 'Use {previous}' }] });
+  assert.match(chain.content[0].text, /Analyze A/);
+  assert.match(chain.content[0].text, /Analyze B/);
+  await assert.rejects(invoke({ definitions: [definitions[0], definitions[0]], agent: 'metric-a', task: 'x' }), /unique valid names/);
+});

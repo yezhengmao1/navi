@@ -9,7 +9,7 @@ import { load } from './helpers.mjs';
 // the model CLI with a local JSON fixture. No model requests or live monitors.
 test('inline scheduled role reaches the isolated child with its prompt/model/tools', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
-  const { default: register } = await load('../../../../.pi/extensions/agent-team/index');
+  const { default: register } = await load('../../../../.pi/extensions/subagent/index');
   const cwd = mkdtempSync(join(tmpdir(), 'pi-scheduled-child-'));
   const script = join(cwd, 'child.cjs');
   writeFileSync(script, `

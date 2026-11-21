@@ -6,7 +6,7 @@ import {
 import { dirname, join, resolve } from "node:path";
 import type { AutocompleteItem, AutocompleteProvider } from "@earendil-works/pi-tui";
 
-import { createSessionPicker } from "./herdr-fork/picker.js";
+import { createSessionPicker } from "./session-picker.js";
 import { mentionLabel, mentionSearchText, mentionPickerOptions } from "./mention-picker.js";
 import { showQuestionnaire } from "./questionnaire.js";
 import { ExternalSessionSources, sourceId, externalIdentity, formatSourceList, parseSourceArguments, type ExternalSession } from "./external-sessions.js";

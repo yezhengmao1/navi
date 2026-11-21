@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { load, tui } from './helpers.mjs';
-const { renderChainCards, formatSubagentUsage, paintCardBackground, subagentCallHeader, updateSubagentHeaderUsage } = await load('../../../../.pi/extensions/agent-team/chain-display');
+const { renderChainCards, formatSubagentUsage, paintCardBackground, subagentCallHeader, updateSubagentHeaderUsage } = await load('../../../../.pi/extensions/subagent/chain-display');
 const theme = { fg: (_color, text) => text, bg: (_color, text) => text };
 const mdTheme = Object.fromEntries(['heading', 'link', 'linkUrl', 'code', 'codeBlock', 'codeBlockBorder', 'quote', 'quoteBorder', 'hr', 'listBullet', 'bold', 'italic', 'strikethrough', 'underline'].map(key => [key, text => text]));
 const cards = [

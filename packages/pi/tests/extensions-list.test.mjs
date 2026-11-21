@@ -45,10 +45,10 @@ test("NAVI wordmark handles narrow widths and resize without clipping the big lo
 
 test("list formatting preserves header, themes each item, and is idempotent", () => {
   const result = extensionListText(compact, dim, 24);
-  assert.equal(result, "[Extensions]\n" + ["clear.ts", "magic-header.ts", "magic-ui.ts"]
+  assert.equal(result, "[Extensions]\n" + ["clear", "magic-header", "magic-ui"]
     .map(name => dim(`  - ${name}`)).join("\n"));
   assert.equal(extensionListText(result, dim), result);
-  assert.equal(extensionListText("[Extensions]\n  only.ts", x => x), "[Extensions]\n  - only.ts");
+  assert.equal(extensionListText("[Extensions]\n  only.ts", x => x), "[Extensions]\n  - only");
   for (const width of [1, 8, 20, 80]) {
     for (const line of new Text(result, 0, 0).render(width)) assert.ok(visibleWidth(line) <= width);
   }
@@ -98,7 +98,7 @@ for (const fullscreen of [false, true]) test(`adapter lifecycle (${fullscreen ? 
   const replacement = section();
   document.children = [replacement];
   adapter.update(root);
-  assert.ok(replacement.build().includes("  - clear.ts"));
+  assert.ok(replacement.build().includes("  - clear "));
   adapter.dispose();
   assert.equal(node.build, original);
   assert.equal(replacement.build(), compact);
@@ -114,7 +114,7 @@ for (const fullscreen of [false, true]) test(`all resource sections are patched 
   const adapter = extensionListAdapter(x => x);
   adapter.update(root);
   for (const node of [skills, extensions]) {
-    assert.ok(node.build().includes("\n  - clear.ts"));
+    assert.ok(node.build().includes(node === skills ? "\n  - clear.ts " : "\n  - clear "));
     node.setExpanded(true);
     assert.ok(node.build().includes("\n  /path/to/only.ts"));
     node.setExpanded(false);
@@ -134,7 +134,7 @@ for (const fullscreen of [false, true]) test(`sections share a grid (${fullscree
   const skills = section(false, "Skills");
   skills.build = () => "[Skills]\n  arxiv, brief, dlc, feishu, 中文";
   const extensions = section();
-  extensions.build = () => "[Extensions]\n  clear.ts, command-guard.ts, herdr-agent-state.ts, magic-ui, subagent";
+  extensions.build = () => "[Extensions]\n  clear.ts, command-guard.ts, example-addon.ts, magic-ui, subagent";
   const document = { children: [skills] };
   const root = fullscreen ? { getMountedRoots: () => [document] } : document;
   const adapter = extensionListAdapter(x => x);

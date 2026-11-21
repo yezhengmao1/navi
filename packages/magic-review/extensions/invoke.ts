@@ -18,24 +18,23 @@ export function modelInvoker(ctx: any, usageRecords: any[], images: any[] = []) 
   };
 }
 
-export function teamInvoker(ctx: any) {
-  if (!ctx.tools?.some((tool: any) => tool.name === 'team')) throw new Error('The existing team tool is unavailable; choose backend=model explicitly instead');
-  return async ({ role, system, prompt, signal }: any) => {
-    const outcome = await ctx.executeTool('team', {
-      action: 'run', backend: 'background', name: `mr-${randomUUID().slice(0, 8)}`,
-      cwd: ctx.cwd, tools: ['read'],
-      instructions: `${system}\nYou are a magic-review ${role} worker. Do not spawn agents or teams. All evidence is in the task; do not read other files. Return one JSON response, no prose, at most 4096 output tokens.`,
-      task: prompt,
+export function subagentInvoker(ctx: any) {
+  if (!ctx.tools?.some((tool: any) => tool.name === 'subagent')) throw new Error('Delegated review requires the subagent tool; enable it or explicitly choose backend=model for a new run');
+  return async ({ role, system, prompt, signal, maxOutputTokens }: any) => {
+    const agent = `mr-${randomUUID().slice(0, 8)}`;
+    const outcome = await ctx.executeTool('subagent', {
+      agent, task: prompt, cwd: ctx.cwd, agentScope: 'user',
+      definitions: [{ name: agent, tools: ['read'], instructions: `${system}\nYou are a magic-review ${role} worker. Do not spawn agents or teams. All evidence is in the task; do not read other files. Return one JSON response, no prose, at most ${maxOutputTokens} output tokens.` }],
     }, { signal });
-    if (outcome.isError || outcome.result?.isError) throw new Error('Team review failed: ' + JSON.stringify(outcome.result?.content).slice(0, 1000));
+    if (outcome.isError || outcome.result?.isError) throw new Error('Subagent review failed: ' + JSON.stringify(outcome.result?.content ?? []).slice(0, 1000));
     const results = outcome.result?.details?.results;
     const worker = results?.[0];
-    if (!worker || results.length !== 1 || worker.exitCode !== 0) throw new Error('Team result lacks a successful single-worker record');
+    if (!worker || results.length !== 1 || worker.exitCode !== 0) throw new Error('Subagent result lacks a successful single-worker record');
     const last = [...(worker.messages ?? [])].reverse().find((message: any) => message.role === 'assistant');
     const text = last?.content?.filter((part: any) => part.type === 'text').map((part: any) => part.text).join('\n');
-    if (!text) throw new Error('Team reviewer returned no final text');
+    if (!text) throw new Error('Subagent reviewer returned no final text');
     const u = worker.usage;
-    if (!u) throw new Error('Team reviewer omitted usage');
+    if (!u) throw new Error('Subagent reviewer omitted usage');
     const input = (u.input ?? 0) + (u.cacheRead ?? 0) + (u.cacheWrite ?? 0);
     return { text, usage: { input, output: u.output ?? 0, totalTokens: input + (u.output ?? 0), cost: u.cost ?? 0 } };
   };

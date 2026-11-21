@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { stripVTControlCharacters } from 'node:util';
 import { load, tui } from './helpers.mjs';
-const { registerScheduler, renderScheduleWidget, Scheduler } = await load('../../../../.pi/extensions/agent-team/scheduler');
+const { registerScheduler, renderScheduleWidget, Scheduler } = await load('../../../../.pi/extensions/subagent/scheduler');
 const { renderSelectionCard } = await load('editor-footer');
 const { visibleWidth } = tui;
 const flush = () => new Promise(resolve => setImmediate(resolve));

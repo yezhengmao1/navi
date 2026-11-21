@@ -82,79 +82,21 @@ export function guardPhase<T>(phase: GuardPhase, work: () => Promise<T>): Promis
 
 // --- confirmation with optional feedback ---------------------------------
 
-
-// A listener must claim synchronously; only its explicit reply can authorize.
-export interface TeamApprovalRequest {
-	source: "safety-guard";
-	risk: RiskLevel;
-	title: string;
-	body: string;
-	toolCallId: string;
-	toolName: string;
-	input: ToolCallEvent["input"];
-	ctx: ExtensionContext;
-	handled: boolean;
-	reply(result: ConfirmResult): void;
-}
-const approvalScope = new AsyncLocalStorage<{
-	pi: ExtensionAPI;
-	toolCallId: string;
-	toolName: string;
-	input: ToolCallEvent["input"];
-	ctx: ExtensionContext;
-}>();
-
-// Keep legacy parser results and local UI wording intact, including cached
-// fallbacks. Uncertainty is never a medium-risk central approval.
-function routingRisk(level: RiskLevel, reason: string): RiskLevel {
-	return /^(没有可用的审查模型|审查模型没有配置鉴权|审查失败（|审查器没有给出明确结论)/.test(reason)
-		? "high" : level;
-}
-
-/**
- * Show the shared confirmation card, routing managed approvals to the lead.
- * Without UI, deny; RPC clients use their native confirmation protocol.
- *
- * Takes the ExtensionContext (not just ctx.ui) so callers can pass `ctx`
- * directly from an event handler, matching how the built-in confirm helpers
- * are used elsewhere.
- */
+/** Ask through the session UI (native confirm for RPC); no UI means no approval. */
 export async function confirmOrFeedback(
 	ctx: ExtensionContext,
 	title: string,
 	body: string,
 	labels?: { yes?: string; no?: string },
-	risk: RiskLevel = "high",
 ): Promise<ConfirmResult> {
-	const scope = approvalScope.getStore();
-	if (scope) {
-		let settle!: (result: ConfirmResult) => void;
-		const response = new Promise<ConfirmResult>(resolve => { settle = resolve; });
-		const request: TeamApprovalRequest = {
-			source: "safety-guard", risk, title, body,
-			toolCallId: scope.toolCallId, toolName: scope.toolName,
-			input: scope.input, ctx: scope.ctx, handled: false,
-			reply: result => settle(result?.allow === true ? { allow: true } :
-				{ allow: false, feedback: result?.allow === false ? result.feedback : undefined }),
-		};
-		scope.pi.events.emit("agent-team:approval", request);
-		if (request.handled) {
-			return guardPhase("confirm", async () => {
-				const signal = scope.ctx.signal;
-				const deny = () => settle({ allow: false });
-				signal?.addEventListener("abort", deny, { once: true });
-				try {
-					if (signal?.aborted) return { allow: false };
-					const result = await response;
-					return signal?.aborted ? { allow: false } : result;
-				} finally { signal?.removeEventListener("abort", deny); }
-			});
-		}
-		// A managed member must never fall back to a local approval dialog if its relay failed to load.
-		if (process.argv.includes("--team-approval-config"))
-			return { allow: false, feedback: "Lead approval relay unavailable; not approved" };
+	// A member launched before the pane relay was retired must not approve locally on reload.
+	if (process.argv.some(arg => arg === "--team-approval-config" || arg.startsWith("--team-approval-config="))) {
+		return { allow: false };
 	}
-	return guardPhase("confirm", () => showConfirmation(ctx, title, body, labels, ctx.signal));
+	return guardPhase("confirm", async () => {
+		const result = await showConfirmation(ctx, title, body, labels, ctx.signal);
+		return result?.allow === true || result?.allow === false ? result : { allow: false };
+	});
 }
 
 // --- static heaviness detection -------------------------------------------
@@ -517,7 +459,7 @@ const DISK_WIPE_RE =
 
 // Overwriting a file via redirection (`> file` or `>> file`). We only block
 // when the target looks like a sensitive path; plain `> out.txt` is fine.
-const REDIRECT_RE = /(^|[;&|`\n]|\s)(?:sudo\s+)?>>?\s*(~|\/[^\s;|&]*)/i;
+const REDIRECT_RE = /(?:^|[;&|`\n]|\s)(?:sudo\s+)?>>?\s*(~?\/[^\s;|&]*)/i;
 
 // git commands that throw away work.
 const GIT_DESTRUCTIVE_RE =
@@ -850,25 +792,6 @@ function cacheSet(key: string, risk: RiskLevel, reason: string): void {
 	reviewCache.set(key, { risk, reason, at: Date.now() });
 }
 
-let pendingFeedback: string | undefined;
-
-async function confirmBlock(
-	ctx: ExtensionContext,
-	title: string,
-	body: string,
-	risk: RiskLevel = "high",
-): Promise<boolean> {
-	const result = await confirmOrFeedback(ctx, title, body, undefined, risk);
-	pendingFeedback = result.allow ? undefined : result.feedback;
-	return result.allow;
-}
-
-function blockFromLatestFeedback(reason: string) {
-	const result = blockWithFeedback(reason, pendingFeedback);
-	pendingFeedback = undefined;
-	return result;
-}
-
 export default function (pi: ExtensionAPI) {
 	pi.registerCommand("clear", {
 		description: "清空当前对话并开始新会话",
@@ -920,13 +843,13 @@ export default function (pi: ExtensionAPI) {
 			if (typeof path === "string") {
 				const reason = sensitivePathReason(path);
 				if (reason) {
-					const ok = await confirmBlock(
+					const decision = await confirmOrFeedback(
 						ctx,
 						"🚫 写入敏感路径",
 						`路径：${path}\n原因：${reason}\n\n确认写入？`,
 					);
-					if (!ok) {
-						return blockFromLatestFeedback(`🚫 用户拒绝写入敏感路径：${path}`);
+					if (!decision.allow) {
+						return blockWithFeedback(`🚫 用户拒绝写入敏感路径：${path}`, decision.feedback);
 					}
 				}
 			}
@@ -966,7 +889,6 @@ export default function (pi: ExtensionAPI) {
 						ctx,
 						"🐌 命令重量审查",
 						`自动审查器将此次命令评为 ${loadLabel}重量：\n\n  ${segment.trim()}\n\n📝 理由：${reason}`,
-						undefined, routingRisk(load, reason),
 					);
 					if (!allow) {
 						return blockWithFeedback(
@@ -979,13 +901,13 @@ export default function (pi: ExtensionAPI) {
 
 			// Rule 1: deletion requires confirmation.
 			if (RM_RE.test(segment) || DELETE_TOOLS_RE.test(segment)) {
-				const ok = await confirmBlock(
+				const decision = await confirmOrFeedback(
 					ctx,
 					"🚫 删除操作",
 					deletionConfirmationBody(segment, ctx.cwd, command.slice(0, segmentStart)),
 				);
-				if (!ok) {
-					return blockFromLatestFeedback(`🚫 用户拒绝删除操作：${segment.trim()}`);
+				if (!decision.allow) {
+					return blockWithFeedback(`🚫 用户拒绝删除操作：${segment.trim()}`, decision.feedback);
 				}
 				continue; // user allowed
 			}
@@ -997,13 +919,13 @@ export default function (pi: ExtensionAPI) {
 				FIND_DELETE_RE.test(segment) ||
 				CHMOD_CHOWN_RE.test(segment)
 			) {
-				const ok = await confirmBlock(
+				const decision = await confirmOrFeedback(
 					ctx,
 					"🚫 破坏性命令",
 					`命令：${segment.trim()}\n\n此命令可能丢失数据或破坏系统。确认执行？`,
 				);
-				if (!ok) {
-					return blockFromLatestFeedback(`🚫 用户拒绝破坏性命令：${segment.trim()}`);
+				if (!decision.allow) {
+					return blockWithFeedback(`🚫 用户拒绝破坏性命令：${segment.trim()}`, decision.feedback);
 				}
 				continue;
 			}
@@ -1014,13 +936,13 @@ export default function (pi: ExtensionAPI) {
 				const target = redirectMatch[1];
 				const reason = sensitivePathReason(target);
 				if (reason) {
-					const ok = await confirmBlock(
+					const decision = await confirmOrFeedback(
 						ctx,
 						"🚫 覆盖敏感路径",
 						`命令：${segment.trim()}\n\n目标：${target}\n原因：${reason}\n\n确认覆盖？`,
 					);
-					if (!ok) {
-						return blockFromLatestFeedback(`🚫 用户拒绝覆盖敏感路径：${target}`);
+					if (!decision.allow) {
+						return blockWithFeedback(`🚫 用户拒绝覆盖敏感路径：${target}`, decision.feedback);
 					}
 				}
 			}
@@ -1036,13 +958,13 @@ export default function (pi: ExtensionAPI) {
 
 				const hazard = staticMvHazard(args);
 				if (hazard) {
-					const ok = await confirmBlock(
+					const decision = await confirmOrFeedback(
 						ctx,
 						"🚫 不安全的 mv",
 						`命令：${segment.trim()}\n原因：${hazard}\n\n确认执行？`,
 					);
-					if (!ok) {
-						return blockFromLatestFeedback(`🚫 用户拒绝不安全的 mv：${segment.trim()}`);
+					if (!decision.allow) {
+						return blockWithFeedback(`🚫 用户拒绝不安全的 mv：${segment.trim()}`, decision.feedback);
 					}
 				}
 
@@ -1055,14 +977,13 @@ export default function (pi: ExtensionAPI) {
 
 				const riskLabel = risk === "high" ? "高" : risk === "medium" ? "中" : "低";
 
-				const ok = await confirmBlock(
+				const decision = await confirmOrFeedback(
 					ctx,
 					"🤖 移动风险审查",
 					`自动审查器将此次移动评为 ${riskLabel}风险：\n\n  ${segment.trim()}\n\n📝 理由：${reason}`,
-					routingRisk(risk, reason),
 				);
 
-				if (!ok && !ctx.hasUI) {
+				if (!decision.allow && !ctx.hasUI) {
 					return {
 						block: true,
 						reason:
@@ -1071,8 +992,8 @@ export default function (pi: ExtensionAPI) {
 					};
 				}
 
-				if (!ok) {
-					return blockFromLatestFeedback(`🚫 Blocked by safety-guard: mv 未获确认（${riskLabel}风险：${reason}）。`);
+				if (!decision.allow) {
+					return blockWithFeedback(`🚫 Blocked by safety-guard: mv 未获确认（${riskLabel}风险：${reason}）。`, decision.feedback);
 				}
 			}
 		}
@@ -1081,11 +1002,10 @@ export default function (pi: ExtensionAPI) {
 	};
 	pi.on("tool_call", async (event, ctx) => {
 		const owner = generation;
-		return approvalScope.run({ pi, toolCallId: event.toolCallId, toolName: event.toolName, input: event.input, ctx },
-			() => trackGuard(event.toolCallId, () => checkTool(event, ctx), data => {
+		return trackGuard(event.toolCallId, () => checkTool(event, ctx), data => {
 			if (owner === generation) pi.events.emit("safety-guard:timing", data);
 		}, data => {
 			if (owner === generation) pi.appendEntry("safety-guard:timing", data);
-		}, () => performance.now(), () => ctx.signal?.aborted ?? false));
+		}, () => performance.now(), () => ctx.signal?.aborted ?? false);
 	});
 }

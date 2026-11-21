@@ -82,7 +82,7 @@ test('real MagicEditor opens dollar candidates and Escape cancels without changi
 });
 
 test('inline picker matches command card across navigation, resizing and filtering; Enter only inserts', async () => {
-  const { createSessionPicker } = await load('herdr-fork/picker');
+  const { createSessionPicker } = await load('session-picker');
   const { mentionLabel, mentionPickerOptions } = await load('mention-picker');
   const sessions = Array.from({ length: 24 }, (_, i) => ({ id: `id-${i}`, name: `会话 ${i}`, cwd: '/work', firstMessage: '' }));
   const { editor, ctx } = await editorHarness(sessions);

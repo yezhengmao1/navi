@@ -1,6 +1,14 @@
-import { Container, Markdown, Spacer, Text, truncateToWidth } from '@earendil-works/pi-tui';
+import { Container, Markdown, Spacer, Text, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import { stripVTControlCharacters } from 'node:util';
-import { frameRows } from './team-display.ts';
+
+function frameRows(rows: string[], width: number, border: (text: string) => string): string[] {
+  if (width < 6) return rows.map(line => truncateToWidth(line, width));
+  const inner = width - 4;
+  return [border(`┌${'╌'.repeat(width - 2)}┐`), ...rows.map(line => {
+    const text = truncateToWidth(line, inner);
+    return border('╎ ') + text + ' '.repeat(Math.max(0, inner - visibleWidth(text))) + border(' ╎');
+  }), border(`└${'╌'.repeat(width - 2)}┘`)];
+}
 
 export function formatSubagentUsage(usage: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }): string {
   // Pi reports uncached input and cache reads/writes separately. Do not add contextTokens again.
@@ -92,7 +100,7 @@ export function renderChainCards(cards: ChainCard[], total: number, _usage: stri
       render(width: number) {
         if (width <= 0) return [];
         const lines = body.render(width >= 6 ? width - 4 : width);
-        return frameRows(lines, width, text => theme.fg('dim', text), false, 'dashed');
+        return frameRows(lines, width, text => theme.fg('dim', text));
       },
     });
   }

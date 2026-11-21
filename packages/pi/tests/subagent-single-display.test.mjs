@@ -4,7 +4,7 @@ import { stripVTControlCharacters } from 'node:util';
 import { load, tui, root } from './helpers.mjs';
 const { initTheme } = await import(`${root}/dist/modes/interactive/theme/theme.js`);
 initTheme('dark', false);
-const { default: register } = await load('../../../../.pi/extensions/agent-team/index');
+const { default: register } = await load('../../../../.pi/extensions/subagent/index');
 let tool;
 register({ registerTool(value) { if (value.name === 'subagent') tool = value; }, registerCommand() {}, on() {}, events: { emit() {} } });
 const background = '\x1b[48;5;234m';

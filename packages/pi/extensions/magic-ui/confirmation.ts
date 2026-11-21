@@ -125,24 +125,12 @@ export class ConfirmFeedbackDialog implements Focusable {
 }
 
 
-/** Ordinary extension permissions preserve the member's existing lead policy. */
 export async function confirmPermission(ctx: ExtensionContext, title: string, body: string): Promise<boolean> {
- const signal = ctx.signal;
- if (!ctx.hasUI || signal?.aborted) return false;
- const confirm = ctx.ui.confirm;
- if ((confirm as any)?.[Symbol.for('navi.team-confirm-relay')]) {
-  const allow = await confirm.call(ctx.ui, title, body, { signal });
-  return !signal?.aborted && allow === true;
- }
- // Never offer local consent when the managed member relay is unavailable.
- if (process.argv.includes('--team-approval-config')) return false;
- return (await showConfirmation(ctx, title, body, undefined, signal)).allow;
+ // Older managed panes must not substitute local approval for a retired relay.
+ if (process.argv.some(arg => arg === '--team-approval-config' || arg.startsWith('--team-approval-config='))) return false;
+ return (await showConfirmation(ctx, title, body, undefined, ctx.signal))?.allow === true;
 }
 
-/** Presentation only: never routes approvals back into the team broker.
- * Explicit per-operation authorizations (review execution/network) also use this
- * directly: they must not inherit the ordinary permission auto-approval policy.
- */
 export async function showConfirmation(
  ctx: ExtensionContext, title: string, body: string,
  labels?: { yes?: string; no?: string }, signal?: AbortSignal,

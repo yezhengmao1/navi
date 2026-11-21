@@ -2,13 +2,15 @@
 
 ## Offline
 
-`node --test packages/magic-review/tests/*.test.mjs`: **80 tests passed, 0 failed**.
+`node --test packages/magic-review/tests/*.test.mjs`: **85 tests passed, 0 failed**.
 
 Coverage includes collection, ranges/context, persistence and cross-process locking, ownership races, independent verification and semantic duplicate references, cancellation uncertainty, bounded evidence packing, UI component rendering/navigation, input routing, extension prepare→run integration, safe image loading and mocked DOI lookup, sandbox capability/denial paths.
 
-Runtime discovery was checked through an actual Pi RPC process, not only mocked registration: `/magic-review` and both skill commands were found without extension startup errors.
+The delegated prepare→run test uses a mock `subagent` tool with no `team` tool and checks all four worker calls and their usage. A separate Pi RPC smoke test loaded the real subagent extension with only `magic_review_prepare,magic_review_run,subagent` enabled and found the `/magic-review` command. Neither test calls a live model.
 
-## Real model and background team
+## Historical live results (before the subagent migration)
+
+These runs tested the previous implementation. The same commands now exercise direct `subagent` dispatch for delegated reviews; the evidence below does not validate that new path.
 
 Command:
 
@@ -49,6 +51,6 @@ The acceptance uses the configured real Pi model and incurs tokens. Fixtures are
 - Bubblewrap, pdflatex/latexmk and pdftotext are absent on this host. Sandbox execution fails closed; real isolated TeX compilation and PDF conversion were not tested. PDF/SVG/EPS rendering is not implemented.
 - UI component tests do not replace manual verification across terminal sizes, terminal emulators and all Pi configurations.
 - Image hash/confinement and DOI handling were tested offline. No real Crossref requests were sent; no real multimodal figure-review quality assessment was performed.
-- Automated team coordination uses the existing background backend. No Herdr-pane lifecycle changes or pane acceptance test was performed.
-- Token reservations are estimates. The external team backend lacks an API for a hard per-worker turn/output-token cap; its managed invocation/deadline limits and actual usage accounting must not be presented as a hard remote spending ceiling.
+- The current delegated backend uses the `subagent` tool, not Herdr panes.
+- Token reservations are estimates. The subagent tool lacks an API for a hard per-worker turn/output-token cap; its managed invocation/deadline limits and actual usage accounting must not be presented as a hard remote spending ceiling.
 - Independent model requests and schema gates do not prove findings correct or mathematically validate a paper.

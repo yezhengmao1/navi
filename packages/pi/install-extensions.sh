@@ -15,7 +15,7 @@ UNINSTALL=0
 LEGACY_EXTENSIONS=(thinking-tail.ts bash-truncate.ts shell-safety-guard.ts
   heavy-command-reviewer.ts confirm-feedback.ts magic-editor.ts
   magic-ui.ts magic-header.ts compact-display.ts codex-quota.ts
-  clear.ts command-guard.ts)
+  clear.ts command-guard.ts idle-summary.ts)
 LEGACY_DIRECTORIES=(herdr-fork)
 cleanup_legacy() {
   for name in "${LEGACY_EXTENSIONS[@]}"; do rm -f -- "$DEST_DIR/$name"; done

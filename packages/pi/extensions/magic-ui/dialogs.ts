@@ -1,7 +1,7 @@
 import type { ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { Input, matchesKey } from '@earendil-works/pi-tui';
 import { renderSelectionCard } from './selection-card.js';
-import { createSessionPicker } from './herdr-fork/picker.js';
+import { createSessionPicker } from './session-picker.js';
 
 /** Ordinary selection, not an authorization: RPC retains the native protocol. */
 export async function selectCard(ctx: ExtensionContext, title: string, choices: string[]) {

@@ -22,10 +22,12 @@ export function renderNaviWordmark(width: number, fg: (color: "accent" | "muted"
 
 function compactListLabels(text: string): string[] | undefined {
 	const lines = text.split("\n");
-	if (lines.length !== 2 || !LIST_SECTIONS.has(stripTerminalSequences(lines[0]!).trim())) return;
+	if (lines.length !== 2) return;
+	const section = stripTerminalSequences(lines[0]!).trim();
+	if (!LIST_SECTIONS.has(section)) return;
 	const body = stripTerminalSequences(lines[1]!);
 	if (!body.startsWith("  ") || !body.trim() || body.trimStart().startsWith("- ")) return;
-	return body.trim().split(", ").map(label => `- ${label}`);
+	return body.trim().split(", ").map(label => `- ${section === "[Extensions]" ? label.replace(/\.ts$/, "") : label}`);
 }
 
 /** Only compact resource lists; leave expanded paths and other text alone. */
