@@ -74,7 +74,7 @@ pi mcp list
 
 它会创建 `.pi/mcp.json`；思源地址和凭证按 server 要求配置在 `~/.navi/config.toml` 的 `[siyuan]`。Pi 中执行 `/reload` 和 `/mcp` 查看连接。
 
-旧 `.claude/skills`、`.claude/agents`、`.codex/agents` 已统一迁移。`integrations/` 下的 Claude 专用状态栏/hooks 及本地 `.claude/settings*.json` 不属于此次 skills/agents 迁移，Pi 不加载它们。
+旧 `.claude/skills`、`.claude/agents`、`.codex/agents` 已统一迁移。Pi 不加载本地 `.claude/settings*.json`。
 
 ## 离线验证
 
