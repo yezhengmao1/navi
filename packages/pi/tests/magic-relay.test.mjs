@@ -6,24 +6,28 @@ import { load } from './helpers.mjs';
 const { registerRelay } = await load('../magic-relay/index');
 function fixture(deadline = 30_000) {
   const calls = [], messages = [], notices = [], events = new Map(), statuses = [];
-  let command, tool;
+  let command, tool, renderer;
   const ctx = { cwd: '/project', mode: 'tui', hasUI: true, isProjectTrusted: () => true, ui: {
     notify: (text, level) => notices.push({text, level}), setStatus: (_, value) => statuses.push(value),
     custom: async () => ({ allow: true }),
   } };
-  const run = (task, cwd, signal) => new Promise((resolve, reject) => calls.push({task, cwd, signal, resolve, reject}));
+  const run = (task, cwd, signal, settings) => new Promise((resolve, reject) => calls.push({task, cwd, signal, settings, resolve, reject}));
   registerRelay({ on: (name, fn) => events.set(name, fn), registerTool: t => { tool = t; },
     registerCommand: (name, c) => { assert.equal(name, 'relay'); command = c; },
+    registerMessageRenderer: (_, fn) => { renderer = fn; },
     sendMessage: (msg, options) => messages.push({msg, options}),
   }, run, deadline);
   return { ctx, calls, messages, notices, statuses, cmd: args => command.handler(args, ctx),
-    exec: (task = 'check', signal) => tool.execute('id', {task}, signal, undefined, ctx),
+    exec: (task = 'check', signal, settings = {}) => tool.execute('id', {task, ...settings}, signal, undefined, ctx),
+    render: (msg, expanded) => renderer(msg, { expanded, keyText: () => 'Ctrl+O' }, { fg: (_c, s) => s }),
     event: name => events.get(name)({}, ctx) };
 }
 
 test('dispatch returns a receipt without polling; one final wake uses followUp, not steering', async () => {
   const f = fixture();
-  const receipt = await f.exec('设计测试');
+  const settings = { model: 'gemini-4-neon', thoughtLevel: 'xhigh' };
+  const receipt = await f.exec('设计测试', undefined, settings);
+  assert.deepEqual(f.calls[0].settings, settings);
   assert.equal(receipt.terminate, true);
   assert.equal(f.calls[0].task, '设计测试'); assert.equal(f.calls[0].cwd, '/project');
   assert.equal(f.messages.length, 0);
@@ -35,6 +39,10 @@ test('dispatch returns a receipt without polling; one final wake uses followUp, 
   assert.deepEqual(options, { deliverAs: 'followUp', triggerTurn: true });
   assert.equal(msg.details.id, receipt.details.id); assert.equal(msg.display, true);
   assert.match(msg.content, /设计测试/); assert.match(msg.content, /evidence/); assert.ok(!msg.content.includes('\x1b'));
+  const compact = f.render(msg, false).render(48);
+  assert.ok(compact.length <= 5); assert.match(compact.join('\n'), /evidence/);
+  assert.doesNotMatch(compact.join('\n'), /设计测试/);
+  assert.equal(f.render(msg, true), undefined); // Native renderer keeps full message.content.
   assert.equal(f.statuses.at(-1), undefined);
 });
 

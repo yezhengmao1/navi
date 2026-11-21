@@ -26,9 +26,72 @@ function localAgy() {
   throw new Error('agy not found on absolute PATH or in ~/.local/bin');
 }
 
-function diagnostic(value: unknown, fallback: string) {
-  if (typeof value !== 'string') return fallback;
-  return value.length > 256 ? `${value.slice(0, 256)}… [truncated]` : value;
+type AgyOptions = { model?: string; thoughtLevel?: string };
+
+function currentValue(config: unknown, id: string): string | undefined {
+  const matches = Array.isArray(config) ? config.filter(option => option?.id === id) : [];
+  if (matches.length === 1 && typeof matches[0].currentValue === 'string') return matches[0].currentValue;
+}
+
+// Only render bounded identifiers, never arbitrary RPC error text or tool payloads.
+function label(value: unknown) {
+  return typeof value === 'string' && /^[\w.:/+ -]{1,96}$/.test(value) ? value : 'unknown';
+}
+
+type Update = { sessionUpdate: string; messageId?: string; content?: { type?: string; text?: string } };
+function textChunk(update: Update) {
+  if (update.content?.type !== 'text' || typeof update.content.text !== 'string') throw new Error('Invalid ACP text chunk');
+  return update.content.text;
+}
+
+// Keep only the last assistant message after the last tool invocation. During
+// load, first identify the turn by its full (possibly chunked) user text.
+function collectAnswer(replayOf?: string) {
+  let answer = '', bytes = 0, messageId: string | undefined;
+  let user: string | undefined, userId: string | undefined, matched = false;
+  function reset() { answer = ''; bytes = 0; messageId = undefined; }
+  function finishUser() {
+    if (user !== undefined) matched = user === replayOf;
+    user = undefined; userId = undefined;
+  }
+  return {
+    update(update: Update) {
+      if (update.messageId !== undefined && typeof update.messageId !== 'string') throw new Error('Invalid ACP message ID');
+      if (replayOf !== undefined) {
+        // Out-of-band metadata is not a user/assistant turn boundary.
+        switch (update.sessionUpdate) {
+          case 'plan': case 'usage_update': case 'available_commands_update': case 'config_option_update':
+          case 'current_mode_update': case 'session_info_update': case 'tool_call_update': return;
+          case 'agent_thought_chunk': case 'agent_message_chunk': case 'user_message_chunk': case 'tool_call': break;
+          default: throw new Error('Unknown ACP load update');
+        }
+        if (update.sessionUpdate === 'user_message_chunk') {
+          if (update.messageId !== undefined && userId !== undefined && userId !== update.messageId) finishUser();
+          if (matched) throw new Error('Unexpected user turn in ACP load');
+          reset();
+          userId = update.messageId ?? userId;
+          user = (user ?? '') + textChunk(update);
+          if (user.length > TASK_BYTES) throw new Error('Oversized user turn in ACP load');
+          return;
+        }
+        finishUser();
+        if (!matched) return;
+      }
+      switch (update.sessionUpdate) {
+        case 'tool_call': reset(); break;
+        case 'agent_message_chunk': {
+          if (replayOf === undefined && update.content?.type !== 'text') break;
+          const text = textChunk(update);
+          if (update.messageId !== undefined && update.messageId !== messageId) { reset(); messageId = update.messageId; }
+          bytes += Buffer.byteLength(text);
+          if (bytes > ANSWER_BYTES) throw new Error(`agy answer exceeds ${ANSWER_BYTES} bytes; refusing truncated output`);
+          answer += text;
+          break;
+        }
+      }
+    },
+    text: () => answer,
+  };
 }
 
 async function* frames(stdout: Readable) {
@@ -57,10 +120,16 @@ async function* frames(stdout: Readable) {
   }
 }
 
-/** One ACP v1 turn. The caller supplies the deadline. Never resume or retry. */
-export async function runAgy(task: string, cwd: string, signal: AbortSignal): Promise<string> {
+/** One fresh ACP v1 turn. The caller supplies the deadline. Never reprompt. */
+export async function runAgy(task: string, cwd: string, signal: AbortSignal, options: AgyOptions = {}): Promise<string> {
   signal.throwIfAborted();
   if (Buffer.byteLength(task) > TASK_BYTES) throw new Error(`agy task exceeds ${TASK_BYTES} bytes`);
+  const requested = [['model', options.model], ['thought_level', options.thoughtLevel]] as const;
+  for (const [id, value] of requested) {
+    if (value !== undefined && (typeof value !== 'string' || !value.trim() || Buffer.byteLength(value) > 256)) {
+      throw new Error(`Invalid ACP ${id} selection`);
+    }
+  }
   const { executable, path } = localAgy();
   cwd = resolve(cwd);
   const child = spawn(executable, ['acp', '--stdio', '--sandbox'], {
@@ -75,57 +144,80 @@ export async function runAgy(task: string, cwd: string, signal: AbortSignal): Pr
   function send(body: object) { child.stdin.write(JSON.stringify({ jsonrpc: '2.0', ...body }) + '\n'); }
 
   try {
-    let pending = 1; // exactly one outstanding request: initialize, new, prompt
-    let sessionId: string | undefined, messageId: string | undefined;
-    let answer = '', answerBytes = 0;
-    send({ id: pending, method: 'initialize', params: { protocolVersion: 1, clientCapabilities: {} } });
-    for await (const msg of frames(child.stdout)) {
+    const incoming = frames(child.stdout);
+    let pending = 0, deniedPermissions = 0, toolCalls = 0;
+    let sessionId: string | undefined;
+    async function request(method: string, params: object, onUpdate?: (update: Update) => void) {
       signal.throwIfAborted();
-      if ('method' in msg) {
+      send({ id: ++pending, method, params });
+      while (true) {
+        const { value: msg, done } = await incoming.next();
+        signal.throwIfAborted();
+        if (done) throw new Error('agy closed stdout before completing the turn');
+        if (!('method' in msg)) {
+          if (msg.id !== pending) throw new Error('agy sent an unexpected response ID');
+          if ('error' in msg) throw new Error(`agy ACP ${method} failed (${Number.isInteger(msg.error?.code) ? msg.error.code : 'RPC error'})`);
+          if (!msg.result || typeof msg.result !== 'object' || Array.isArray(msg.result)) throw new Error('Invalid ACP result');
+          if (sessionId && 'sessionId' in msg.result && msg.result.sessionId !== sessionId) throw new Error('Unexpected ACP session ID');
+          return msg.result;
+        }
         if ('id' in msg) {
           if (typeof msg.id !== 'number' && typeof msg.id !== 'string') throw new Error('Invalid ACP request ID');
           if (msg.method === 'session/request_permission') {
+            deniedPermissions++;
             send({ id: msg.id, result: { outcome: { outcome: 'cancelled' } } });
           } else {
             send({ id: msg.id, error: { code: -32601, message: 'No such client method' } });
           }
-        } else if (msg.method === 'session/update' && pending === 3 && msg.params?.sessionId === sessionId) {
-          const update = msg.params.update;
-          if (update?.sessionUpdate === 'tool_call') {
-            answer = ''; answerBytes = 0; messageId = undefined;
-          } else if (update?.sessionUpdate === 'agent_message_chunk' && update.content?.type === 'text') {
-            if (typeof update.content.text !== 'string') throw new Error('Invalid ACP text chunk');
-            if (typeof update.messageId === 'string' && update.messageId !== messageId) {
-              answer = ''; answerBytes = 0; messageId = update.messageId;
-            }
-            answerBytes += Buffer.byteLength(update.content.text);
-            if (answerBytes > ANSWER_BYTES) throw new Error(`agy answer exceeds ${ANSWER_BYTES} bytes; refusing truncated output`);
-            answer += update.content.text;
-          }
+        } else if (onUpdate && msg.method === 'session/update') {
+          if (typeof msg.params?.sessionId !== 'string') throw new Error('Missing ACP update session ID');
+          if (msg.params.sessionId !== sessionId) continue;
+          if (typeof msg.params.update?.sessionUpdate !== 'string') throw new Error('Invalid ACP update');
+          onUpdate(msg.params.update);
         }
-        continue;
-      }
-      if (msg.id !== pending) throw new Error('agy sent an unexpected response ID');
-      if ('error' in msg) {
-        throw new Error(`agy ACP request ${pending} failed: ${diagnostic(msg.error?.message, 'RPC error')}`);
-      }
-      const result = msg.result;
-      if (pending === 1) {
-        if (result?.protocolVersion !== 1) throw new Error('agy did not negotiate ACP v1');
-        send({ id: ++pending, method: 'session/new', params: { cwd, mcpServers: [] } });
-      } else if (pending === 2) {
-        if (typeof result?.sessionId !== 'string' || !result.sessionId) throw new Error('agy returned no session ID');
-        sessionId = result.sessionId;
-        send({ id: ++pending, method: 'session/prompt', params: { sessionId, prompt: [{ type: 'text', text: task }] } });
-      } else {
-        if (result?.stopReason !== 'end_turn') {
-          throw new Error(`agy did not end_turn: ${diagnostic(result?.stopReason, 'missing stop reason')}`);
-        }
-        if (!answer.trim()) throw new Error('agy ended without a text answer');
-        return answer;
       }
     }
-    throw new Error('agy closed stdout before completing the turn');
+
+    const init = await request('initialize', { protocolVersion: 1, clientCapabilities: {} });
+    if (init.protocolVersion !== 1) throw new Error('agy did not negotiate ACP v1');
+    const fresh = await request('session/new', { cwd, mcpServers: [] });
+    if (typeof fresh.sessionId !== 'string' || !fresh.sessionId) throw new Error('agy returned no session ID');
+    sessionId = fresh.sessionId;
+    let config = fresh.configOptions;
+    for (const [configId, value] of requested) {
+      if (value === undefined) continue;
+      const current = currentValue(config, configId);
+      if (current === undefined) throw new Error(`Cannot verify ACP ${configId}`);
+      if (current !== value) config = (await request('session/set_config_option', { sessionId, configId, value })).configOptions;
+    }
+    // Changing effort may reset model (or vice versa). Inspect the last full
+    // snapshot, not accumulated successful acknowledgements from earlier calls.
+    for (const [id, value] of requested) {
+      if (value !== undefined && currentValue(config, id) !== value) throw new Error(`ACP ${id} selection not confirmed`);
+    }
+    const live = collectAnswer();
+    const result = await request('session/prompt', { sessionId, prompt: [{ type: 'text', text: task }] }, update => {
+      if (update.sessionUpdate === 'tool_call') toolCalls++;
+      live.update(update);
+    });
+    if (result.stopReason !== 'end_turn') throw new Error(`agy did not end_turn: ${label(result.stopReason)}`);
+    if (live.text().trim()) return live.text();
+
+    let recovery = 'load unavailable';
+    if (init.agentCapabilities?.loadSession === true) {
+      const replay = collectAnswer(task);
+      try {
+        const loaded = await request('session/load', { sessionId, cwd, mcpServers: [] }, replay.update);
+        if (loaded.sessionId === sessionId && replay.text().trim()) return replay.text();
+        recovery = 'load did not confirm an answer';
+      } catch {
+        signal.throwIfAborted();
+        recovery = 'load failed';
+      }
+    }
+    const blocked = deniedPermissions ? `；观察到 ${deniedPermissions} 次权限请求被拒` : '';
+    throw new Error(`agy 已结束，但没有可验收的正文${blocked}。未重新派发。` +
+      `\n${recovery}; stopReason=end_turn, toolCalls=${toolCalls}, deniedPermissions=${deniedPermissions}, model=${label(currentValue(config, 'model'))}, thought_level=${label(currentValue(config, 'thought_level'))}`);
   } catch (err) {
     signal.throwIfAborted(); // preserve the caller's cancellation/timeout reason
     throw err;
